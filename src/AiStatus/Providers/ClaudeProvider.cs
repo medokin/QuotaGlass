@@ -112,121 +112,7 @@ public sealed class ClaudeProvider : IStatusProvider
     private Credential ReadCredential()
     {
         using Stream stream = _openCredential(_credentialPath);
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
-        int bytesInBuffer = 0;
-        var state = new JsonReaderState();
-        bool awaitsOauthObject = false;
-        bool inOauthObject = false;
-        int oauthObjectDepth = -1;
-        CredentialField field = CredentialField.None;
-        string? accessToken = null;
-        long? expiresAtUnixMilliseconds = null;
-
-        try
-        {
-            while (true)
-            {
-                if (bytesInBuffer == buffer.Length)
-                {
-                    byte[] expandedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
-                    Buffer.BlockCopy(buffer, 0, expandedBuffer, 0, bytesInBuffer);
-                    CryptographicOperations.ZeroMemory(buffer);
-                    ArrayPool<byte>.Shared.Return(buffer);
-                    buffer = expandedBuffer;
-                }
-
-                int read = stream.Read(buffer, bytesInBuffer, buffer.Length - bytesInBuffer);
-                bool isFinalBlock = read == 0;
-                bytesInBuffer += read;
-                var reader = new Utf8JsonReader(buffer.AsSpan(0, bytesInBuffer), isFinalBlock, state);
-
-                while (reader.Read())
-                {
-                    if (awaitsOauthObject)
-                    {
-                        if (reader.TokenType != JsonTokenType.StartObject)
-                        {
-                            throw new InvalidDataException("Claude credentials are incomplete.");
-                        }
-
-                        awaitsOauthObject = false;
-                        inOauthObject = true;
-                        oauthObjectDepth = reader.CurrentDepth;
-                        continue;
-                    }
-
-                    if (!inOauthObject)
-                    {
-                        if (reader.TokenType == JsonTokenType.PropertyName &&
-                            reader.CurrentDepth == 1 &&
-                            reader.ValueTextEquals("claudeAiOauth"))
-                        {
-                            awaitsOauthObject = true;
-                        }
-
-                        continue;
-                    }
-
-                    if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == oauthObjectDepth + 1)
-                    {
-                        field = reader.ValueTextEquals("accessToken")
-                            ? CredentialField.AccessToken
-                            : reader.ValueTextEquals("expiresAt")
-                                ? CredentialField.ExpiresAt
-                                : CredentialField.None;
-                        continue;
-                    }
-
-                    if (field == CredentialField.AccessToken && reader.TokenType == JsonTokenType.String)
-                    {
-                        accessToken = reader.GetString();
-                        field = CredentialField.None;
-                        continue;
-                    }
-
-                    if (field == CredentialField.ExpiresAt && reader.TokenType == JsonTokenType.Number)
-                    {
-                        if (!reader.TryGetInt64(out long expiresAt))
-                        {
-                            throw new InvalidDataException("Claude credentials are incomplete.");
-                        }
-
-                        expiresAtUnixMilliseconds = expiresAt;
-                        field = CredentialField.None;
-                        continue;
-                    }
-
-                    if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == oauthObjectDepth)
-                    {
-                        if (string.IsNullOrWhiteSpace(accessToken) || expiresAtUnixMilliseconds is not long expiresAt)
-                        {
-                            throw new InvalidDataException("Claude credentials are incomplete.");
-                        }
-
-                        return new Credential(accessToken, DateTimeOffset.FromUnixTimeMilliseconds(expiresAt));
-                    }
-                }
-
-                int consumed = checked((int)reader.BytesConsumed);
-                state = reader.CurrentState;
-                int unconsumed = bytesInBuffer - consumed;
-                if (unconsumed > 0)
-                {
-                    Buffer.BlockCopy(buffer, consumed, buffer, 0, unconsumed);
-                }
-
-                bytesInBuffer = unconsumed;
-                if (isFinalBlock)
-                {
-                    throw new InvalidDataException("Claude credentials are incomplete.");
-                }
-            }
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(buffer);
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
+        return new CredentialScanner(stream).Read();
     }
 
     private async Task<ProfileResult> GetProfileAsync(
@@ -404,6 +290,517 @@ public sealed class ClaudeProvider : IStatusProvider
     private sealed record Credential(string AccessToken, DateTimeOffset ExpiresAt);
 
     private sealed record ProfileResult(string? PlanLabel, bool AuthExpired, string? Error);
+
+    private sealed class CredentialScanner(Stream stream)
+    {
+        private static readonly byte[] OAuthProperty = "claudeAiOauth"u8.ToArray();
+        private static readonly byte[] AccessTokenProperty = "accessToken"u8.ToArray();
+        private static readonly byte[] ExpiresAtProperty = "expiresAt"u8.ToArray();
+        private readonly Stream _stream = stream;
+        private int _lookahead = -1;
+
+        public Credential Read()
+        {
+            Expect((byte)'{');
+            while (true)
+            {
+                int next = ReadNonWhitespace();
+                if (next == '}')
+                {
+                    throw Incomplete();
+                }
+
+                Unread(next);
+                bool isOAuth = ReadPropertyNameMatches(OAuthProperty);
+                Expect((byte)':');
+                if (isOAuth)
+                {
+                    return ReadOAuthObject();
+                }
+
+                SkipValue();
+                ReadObjectSeparator();
+            }
+        }
+
+        private Credential ReadOAuthObject()
+        {
+            Expect((byte)'{');
+            string? accessToken = null;
+            long? expiresAtUnixMilliseconds = null;
+
+            while (true)
+            {
+                int next = ReadNonWhitespace();
+                if (next == '}')
+                {
+                    throw Incomplete();
+                }
+
+                Unread(next);
+                CredentialField property = ReadOAuthProperty();
+                Expect((byte)':');
+
+                if (property == CredentialField.AccessToken)
+                {
+                    if (accessToken is not null || ReadNonWhitespace() != '"')
+                    {
+                        throw Incomplete();
+                    }
+
+                    Unread('"');
+                    accessToken = ReadExpectedString();
+                }
+                else if (property == CredentialField.ExpiresAt)
+                {
+                    if (expiresAtUnixMilliseconds is not null)
+                    {
+                        throw Incomplete();
+                    }
+
+                    expiresAtUnixMilliseconds = ReadExpectedInt64();
+                }
+                else
+                {
+                    SkipValue();
+                }
+
+                if (accessToken is not null && expiresAtUnixMilliseconds is long expiresAt)
+                {
+                    if (string.IsNullOrWhiteSpace(accessToken))
+                    {
+                        throw Incomplete();
+                    }
+
+                    return new Credential(accessToken, DateTimeOffset.FromUnixTimeMilliseconds(expiresAt));
+                }
+
+                ReadObjectSeparator();
+            }
+        }
+
+        private CredentialField ReadOAuthProperty()
+        {
+            Expect((byte)'"');
+            int length = 0;
+            bool accessTokenMatches = true;
+            bool expiresAtMatches = true;
+            bool escaped = false;
+
+            while (true)
+            {
+                int value = ReadByte();
+                if (value < 0)
+                {
+                    throw Incomplete();
+                }
+
+                if (escaped)
+                {
+                    accessTokenMatches = false;
+                    expiresAtMatches = false;
+                    escaped = false;
+                    continue;
+                }
+
+                if (value == '\\')
+                {
+                    accessTokenMatches = false;
+                    expiresAtMatches = false;
+                    escaped = true;
+                    continue;
+                }
+
+                if (value == '"')
+                {
+                    if (accessTokenMatches && length == AccessTokenProperty.Length)
+                    {
+                        return CredentialField.AccessToken;
+                    }
+
+                    return expiresAtMatches && length == ExpiresAtProperty.Length
+                        ? CredentialField.ExpiresAt
+                        : CredentialField.None;
+                }
+
+                if (value < 0x20 || length >= AccessTokenProperty.Length || value != AccessTokenProperty[length])
+                {
+                    accessTokenMatches = false;
+                }
+
+                if (value < 0x20 || length >= ExpiresAtProperty.Length || value != ExpiresAtProperty[length])
+                {
+                    expiresAtMatches = false;
+                }
+
+                length++;
+            }
+        }
+
+        private bool ReadPropertyNameMatches(ReadOnlySpan<byte> expected)
+        {
+            Expect((byte)'"');
+            int index = 0;
+            bool matches = true;
+            bool escaped = false;
+
+            while (true)
+            {
+                int value = ReadByte();
+                if (value < 0)
+                {
+                    throw Incomplete();
+                }
+
+                if (escaped)
+                {
+                    matches = false;
+                    escaped = false;
+                    continue;
+                }
+
+                if (value == '\\')
+                {
+                    matches = false;
+                    escaped = true;
+                    continue;
+                }
+
+                if (value == '"')
+                {
+                    return matches && index == expected.Length;
+                }
+
+                if (value < 0x20 || index >= expected.Length || value != expected[index++])
+                {
+                    matches = false;
+                }
+            }
+        }
+
+        private string ReadExpectedString()
+        {
+            byte[] encoded = ArrayPool<byte>.Shared.Rent(128);
+            int length = 0;
+            bool escaped = false;
+
+            try
+            {
+                Expect((byte)'"');
+                Append((byte)'"');
+                while (true)
+                {
+                    int value = ReadByte();
+                    if (value < 0)
+                    {
+                        throw Incomplete();
+                    }
+
+                    Append((byte)value);
+                    if (escaped)
+                    {
+                        escaped = false;
+                        continue;
+                    }
+
+                    if (value == '\\')
+                    {
+                        escaped = true;
+                        continue;
+                    }
+
+                    if (value == '"')
+                    {
+                        var reader = new Utf8JsonReader(encoded.AsSpan(0, length), isFinalBlock: true, state: default);
+                        if (!reader.Read() || reader.TokenType != JsonTokenType.String || reader.GetString() is not string token)
+                        {
+                            throw Incomplete();
+                        }
+
+                        return token;
+                    }
+
+                    if (value < 0x20)
+                    {
+                        throw Incomplete();
+                    }
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(encoded);
+                ArrayPool<byte>.Shared.Return(encoded);
+            }
+
+            void Append(byte value)
+            {
+                if (length == encoded.Length)
+                {
+                    byte[] expanded = ArrayPool<byte>.Shared.Rent(encoded.Length * 2);
+                    Buffer.BlockCopy(encoded, 0, expanded, 0, length);
+                    CryptographicOperations.ZeroMemory(encoded);
+                    ArrayPool<byte>.Shared.Return(encoded);
+                    encoded = expanded;
+                }
+
+                encoded[length++] = value;
+            }
+        }
+
+        private long ReadExpectedInt64()
+        {
+            int first = ReadNonWhitespace();
+            bool negative = first == '-';
+            if (negative)
+            {
+                first = ReadByte();
+            }
+
+            if (first is < '0' or > '9')
+            {
+                throw Incomplete();
+            }
+
+            long value = first - '0';
+            while (true)
+            {
+                int next = ReadByte();
+                if (next is >= '0' and <= '9')
+                {
+                    try
+                    {
+                        value = checked((value * 10) + (next - '0'));
+                    }
+                    catch (OverflowException)
+                    {
+                        throw Incomplete();
+                    }
+
+                    continue;
+                }
+
+                if (!IsValueDelimiter(next))
+                {
+                    throw Incomplete();
+                }
+
+                Unread(next);
+                return negative ? -value : value;
+            }
+        }
+
+        private void SkipValue()
+        {
+            int first = ReadNonWhitespace();
+            switch (first)
+            {
+                case '"':
+                    SkipStringBody();
+                    return;
+                case '{':
+                    SkipObject();
+                    return;
+                case '[':
+                    SkipArray();
+                    return;
+                case 't':
+                    ReadLiteral("rue"u8);
+                    return;
+                case 'f':
+                    ReadLiteral("alse"u8);
+                    return;
+                case 'n':
+                    ReadLiteral("ull"u8);
+                    return;
+                default:
+                    if (first is '-' or >= '0' and <= '9')
+                    {
+                        SkipNumber();
+                        return;
+                    }
+
+                    throw Incomplete();
+            }
+        }
+
+        private void SkipObject()
+        {
+            int next = ReadNonWhitespace();
+            if (next == '}')
+            {
+                return;
+            }
+
+            Unread(next);
+            while (true)
+            {
+                SkipString();
+                Expect((byte)':');
+                SkipValue();
+                int separator = ReadNonWhitespace();
+                if (separator == '}')
+                {
+                    return;
+                }
+
+                if (separator != ',')
+                {
+                    throw Incomplete();
+                }
+            }
+        }
+
+        private void SkipArray()
+        {
+            int next = ReadNonWhitespace();
+            if (next == ']')
+            {
+                return;
+            }
+
+            Unread(next);
+            while (true)
+            {
+                SkipValue();
+                int separator = ReadNonWhitespace();
+                if (separator == ']')
+                {
+                    return;
+                }
+
+                if (separator != ',')
+                {
+                    throw Incomplete();
+                }
+            }
+        }
+
+        private void SkipString()
+        {
+            Expect((byte)'"');
+            SkipStringBody();
+        }
+
+        private void SkipStringBody()
+        {
+            bool escaped = false;
+            while (true)
+            {
+                int value = ReadByte();
+                if (value < 0 || value < 0x20)
+                {
+                    throw Incomplete();
+                }
+
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (value == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (value == '"')
+                {
+                    return;
+                }
+            }
+        }
+
+        private void SkipNumber()
+        {
+            while (true)
+            {
+                int next = ReadByte();
+                if (IsValueDelimiter(next))
+                {
+                    Unread(next);
+                    return;
+                }
+
+                if (next < 0)
+                {
+                    throw Incomplete();
+                }
+            }
+        }
+
+        private void ReadLiteral(ReadOnlySpan<byte> literal)
+        {
+            foreach (byte expected in literal)
+            {
+                if (ReadByte() != expected)
+                {
+                    throw Incomplete();
+                }
+            }
+        }
+
+        private void ReadObjectSeparator()
+        {
+            int separator = ReadNonWhitespace();
+            if (separator != ',')
+            {
+                throw Incomplete();
+            }
+        }
+
+        private void Expect(byte expected)
+        {
+            if (ReadNonWhitespace() != expected)
+            {
+                throw Incomplete();
+            }
+        }
+
+        private int ReadNonWhitespace()
+        {
+            int value;
+            do
+            {
+                value = ReadByte();
+            }
+            while (value is ' ' or '\t' or '\r' or '\n');
+
+            if (value < 0)
+            {
+                throw Incomplete();
+            }
+
+            return value;
+        }
+
+        private int ReadByte()
+        {
+            if (_lookahead >= 0)
+            {
+                int value = _lookahead;
+                _lookahead = -1;
+                return value;
+            }
+
+            return _stream.ReadByte();
+        }
+
+        private void Unread(int value)
+        {
+            if (value < 0 || _lookahead >= 0)
+            {
+                throw Incomplete();
+            }
+
+            _lookahead = value;
+        }
+
+        private static bool IsValueDelimiter(int value) =>
+            value is ',' or '}' or ']' or ' ' or '\t' or '\r' or '\n';
+
+        private static InvalidDataException Incomplete() => new("Claude credentials are incomplete.");
+    }
 
     private enum CredentialField { None, AccessToken, ExpiresAt }
 }

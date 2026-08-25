@@ -63,18 +63,81 @@ public sealed class ClaudeProviderTests : IDisposable
     [Fact]
     public async Task FetchAsync_ExpiredCredentialSkipsTrailingRefreshToken()
     {
-        // Catches a whole-document credential reader that materializes a refresh token after the required OAuth fields.
+        // Catches a credential reader that continues into a protected refresh-token tail after required fields are complete.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
         ClaudeProvider provider = CreateProviderWithCredentialStream(
             handler,
-            new RefreshTokenTailStream("""
+            new SingleByteCredentialStream("""
                 {"claudeAiOauth":{"accessToken":"unit-test-access-token","expiresAt":0},"refreshToken":"sentinel-refresh-token"}
+                """, ",\"refreshToken\""));
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.AuthExpired, snapshot.Health);
+        Assert.Equal("re-auth: run claude login", snapshot.Error);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ExpiredCredentialSkipsNestedRefreshTokenWithOneByteReads()
+    {
+        // Catches a credential reader that buffers an unknown OAuth refresh-token string before reaching expiry.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredentialStream(
+            handler,
+            new SingleByteCredentialStream("""
+                {"claudeAiOauth":{"accessToken":"unit-test-access-token","refreshToken":"sentinel-refresh-token","expiresAt":0}}
                 """));
 
         ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_NestedAccessTokenReturnsDegradedWithoutHttp()
+    {
+        // Catches a reader that mistakes a nested descendant string for direct claudeAiOauth.accessToken.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            "{\"claudeAiOauth\":{\"accessToken\":{\"nested\":\"unit-test-access-token\"},\"expiresAt\":0}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, snapshot.Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ArrayExpiresAtReturnsDegradedWithoutHttp()
+    {
+        // Catches a reader that mistakes an array element for direct claudeAiOauth.expiresAt.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":[0]}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, snapshot.Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_EmptyAccessTokenReturnsDegradedWithoutHttp()
+    {
+        // Catches a selective reader that accepts an empty direct access token.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            "{\"claudeAiOauth\":{\"accessToken\":\"\",\"expiresAt\":0}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -250,15 +313,18 @@ public sealed class ClaudeProviderTests : IDisposable
         }
     }
 
-    private sealed class RefreshTokenTailStream : Stream
+    private sealed class SingleByteCredentialStream : Stream
     {
-        private readonly byte[] _safePrefix;
-        private bool _safePrefixRead;
+        private readonly byte[] _credential;
+        private readonly int _protectedTailOffset;
+        private int _position;
 
-        public RefreshTokenTailStream(string credential)
+        public SingleByteCredentialStream(string credential, string? protectedTail = null)
         {
-            int protectedTail = credential.IndexOf(",\"refreshToken\"", StringComparison.Ordinal);
-            _safePrefix = Encoding.UTF8.GetBytes(credential[..protectedTail]);
+            _credential = Encoding.UTF8.GetBytes(credential);
+            _protectedTailOffset = protectedTail is null
+                ? _credential.Length
+                : credential.IndexOf(protectedTail, StringComparison.Ordinal);
         }
 
         public override bool CanRead => true;
@@ -281,14 +347,18 @@ public sealed class ClaudeProviderTests : IDisposable
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (_safePrefixRead)
+            if (count != 1)
             {
-                throw new Xunit.Sdk.XunitException("refreshToken must not be materialized");
+                throw new Xunit.Sdk.XunitException("credential reader must not request a bulk buffer");
             }
 
-            _safePrefixRead = true;
-            _safePrefix.AsSpan().CopyTo(buffer.AsSpan(offset, count));
-            return _safePrefix.Length;
+            if (_position >= _protectedTailOffset)
+            {
+                throw new Xunit.Sdk.XunitException("refreshToken tail must not be read");
+            }
+
+            buffer[offset] = _credential[_position++];
+            return 1;
         }
 
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
