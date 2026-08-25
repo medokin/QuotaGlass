@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Threading.Channels;
 using AiStatus.Model;
 using AiStatus.Providers;
 
@@ -13,10 +14,17 @@ public sealed class StatusPoller
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _providerTimeout;
     private readonly SynchronizationContext? _synchronizationContext;
-    private readonly object _refreshGate = new();
-    private TaskCompletionSource _refreshSignal = CreateSignal();
+    private readonly SemaphoreSlim _pollGate = new(1, 1);
+    private readonly Channel<bool> _refreshRequests = Channel.CreateUnbounded<bool>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            AllowSynchronousContinuations = false,
+        });
     private StatusReport _current;
     private int _reducedCadence;
+    private int _runActive;
 
     public StatusPoller(
         IReadOnlyList<IStatusProvider> providers,
@@ -44,30 +52,42 @@ public sealed class StatusPoller
 
     public async Task<StatusReport> PollOnceAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        AppSettings settings = _settings();
-        StatusReport previous = Current;
-        Dictionary<string, ProviderSnapshot> previousById = previous.Providers
-            .GroupBy(snapshot => snapshot.Id, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        await _pollGate.WaitAsync(cancellationToken);
+        try
+        {
+            AppSettings settings = _settings();
+            StatusReport previous = Current;
+            Dictionary<string, ProviderSnapshot> previousById = previous.Providers
+                .GroupBy(snapshot => snapshot.Id, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
 
-        Task<ProviderSnapshot>[] fetches = _providers
-            .Select(provider => IsEnabled(settings, provider.Id)
-                ? FetchProviderAsync(provider, previousById.GetValueOrDefault(provider.Id), cancellationToken)
-                : Task.FromResult(CreateDisabledSnapshot(provider)))
-            .ToArray();
+            Task<ProviderSnapshot>[] fetches = _providers
+                .Select(provider => IsEnabled(settings, provider.Id)
+                    ? FetchProviderAsync(provider, previousById.GetValueOrDefault(provider.Id), cancellationToken)
+                    : Task.FromResult(CreateDisabledSnapshot(provider)))
+                .ToArray();
 
-        ProviderSnapshot[] providers = await Task.WhenAll(fetches);
-        cancellationToken.ThrowIfCancellationRequested();
+            ProviderSnapshot[] providers = await Task.WhenAll(fetches);
+            cancellationToken.ThrowIfCancellationRequested();
 
-        var report = new StatusReport(_timeProvider.GetUtcNow(), providers.ToImmutableArray());
-        Volatile.Write(ref _current, report);
-        DispatchReportUpdated(report);
-        return report;
+            var report = new StatusReport(_timeProvider.GetUtcNow(), providers.ToImmutableArray());
+            Volatile.Write(ref _current, report);
+            DispatchReportUpdated(report);
+            return report;
+        }
+        finally
+        {
+            _pollGate.Release();
+        }
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        if (Interlocked.CompareExchange(ref _runActive, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("The status poller is already running.");
+        }
+
         PeriodicTimer? timer = null;
         try
         {
@@ -82,7 +102,9 @@ public sealed class StatusPoller
                 Task completed = await Task.WhenAny(tick, refresh);
 
                 waitCancellation.Cancel();
-                await ObserveCanceledLoserAsync(completed == tick ? refresh : tick);
+                await Task.WhenAll(
+                    ObserveCancellationAsync(tick),
+                    ObserveCancellationAsync(refresh));
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (completed == tick && !await tick)
@@ -107,14 +129,15 @@ public sealed class StatusPoller
         finally
         {
             timer?.Dispose();
+            Volatile.Write(ref _runActive, 0);
         }
     }
 
     public void RequestRefresh()
     {
-        lock (_refreshGate)
+        if (!_refreshRequests.Writer.TryWrite(true))
         {
-            _refreshSignal.TrySetResult();
+            throw new InvalidOperationException("The refresh queue is unavailable.");
         }
     }
 
@@ -126,9 +149,6 @@ public sealed class StatusPoller
             RequestRefresh();
         }
     }
-
-    private static TaskCompletionSource CreateSignal() =>
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static bool IsEnabled(AppSettings settings, string providerId) =>
         !settings.Providers.TryGetValue(providerId, out ProviderSettings? providerSettings)
@@ -229,24 +249,10 @@ public sealed class StatusPoller
 
     private async Task WaitForRefreshAsync(CancellationToken cancellationToken)
     {
-        TaskCompletionSource signal;
-        lock (_refreshGate)
-        {
-            signal = _refreshSignal;
-        }
-
-        await signal.Task.WaitAsync(cancellationToken);
-
-        lock (_refreshGate)
-        {
-            if (ReferenceEquals(_refreshSignal, signal))
-            {
-                _refreshSignal = CreateSignal();
-            }
-        }
+        await _refreshRequests.Reader.ReadAsync(cancellationToken);
     }
 
-    private static async Task ObserveCanceledLoserAsync(Task task)
+    private static async Task ObserveCancellationAsync(Task task)
     {
         try
         {

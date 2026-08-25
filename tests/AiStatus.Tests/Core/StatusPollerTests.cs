@@ -28,6 +28,89 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task PollOnceAsync_SerializesConcurrentTransitionsAndKeepsNewerResult()
+    {
+        // Break caught: a slower older poll publishes after a newer concurrent poll.
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource<ProviderSnapshot>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        ProviderSnapshot older = FakeStatusProvider.Snapshot("claude", planLabel: "older");
+        ProviderSnapshot newer = FakeStatusProvider.Snapshot("claude", planLabel: "newer");
+        FakeStatusProvider provider = new(
+            "claude",
+            (invocation, cancellationToken) =>
+            {
+                if (invocation == 1)
+                {
+                    firstStarted.TrySetResult();
+                    return releaseFirst.Task.WaitAsync(cancellationToken);
+                }
+
+                secondStarted.TrySetResult();
+                return Task.FromResult(newer);
+            });
+        StatusPoller poller = CreatePoller([provider]);
+
+        Task<StatusReport> firstPoll = poller.PollOnceAsync(CancellationToken.None);
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Task<StatusReport> secondPoll = poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.False(secondStarted.Task.IsCompleted);
+        releaseFirst.SetResult(older);
+        await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await Task.WhenAll(firstPoll, secondPoll).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal("newer", Assert.Single(poller.Current.Providers).PlanLabel);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_ConcurrentFailuresIncrementFromPublishedState()
+    {
+        // Break caught: concurrent failures both derive count one from the same prior report.
+        var firstFailureStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFailureStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ProviderSnapshot success = FakeStatusProvider.Snapshot("claude", planLabel: "retained");
+        FakeStatusProvider provider = new(
+            "claude",
+            async (invocation, cancellationToken) =>
+            {
+                if (invocation == 1)
+                {
+                    return success;
+                }
+
+                if (invocation == 2)
+                {
+                    firstFailureStarted.TrySetResult();
+                    await releaseFirstFailure.Task.WaitAsync(cancellationToken);
+                }
+                else
+                {
+                    secondFailureStarted.TrySetResult();
+                }
+
+                throw new IOException();
+            });
+        StatusPoller poller = CreatePoller([provider]);
+        await poller.PollOnceAsync(CancellationToken.None);
+
+        Task<StatusReport> firstFailure = poller.PollOnceAsync(CancellationToken.None);
+        await firstFailureStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Task<StatusReport> secondFailure = poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.False(secondFailureStarted.Task.IsCompleted);
+        releaseFirstFailure.SetResult();
+        await secondFailureStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        StatusReport[] reports = await Task.WhenAll(firstFailure, secondFailure).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, Assert.Single(reports[0].Providers).ConsecutiveFailures);
+        Assert.Equal(2, Assert.Single(reports[1].Providers).ConsecutiveFailures);
+        Assert.Equal(2, Assert.Single(poller.Current.Providers).ConsecutiveFailures);
+    }
+
+    [Fact]
     public async Task PollOnceAsync_DefaultTimeoutIsTenSeconds()
     {
         // Break caught: the production timeout drifts from ten seconds.
@@ -249,6 +332,67 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task RequestRefresh_BackToBackRequestsEachProduceAPoll()
+    {
+        // Break caught: a second request arriving while the first signal is consumed is lost.
+        var time = new RecordingTimeProvider();
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        FakeStatusProvider provider = new(
+            "claude",
+            (invocation, _) =>
+            {
+                if (invocation == 2)
+                {
+                    secondStarted.TrySetResult();
+                }
+
+                return Task.FromResult(FakeStatusProvider.Snapshot("claude"));
+            });
+        StatusPoller poller = CreatePoller([provider], timeProvider: time);
+        using var cancellation = new CancellationTokenSource();
+        Task run = poller.RunAsync(cancellation.Token);
+        await time.WaitForTimerAsync(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+
+        try
+        {
+            poller.RequestRefresh();
+            poller.RequestRefresh();
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Equal(2, provider.InvocationCount);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await run.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_RejectsSecondCallerWithoutCreatingAnotherTimer()
+    {
+        // Break caught: two active RunAsync callers own independent timers and consume refreshes concurrently.
+        var time = new RecordingTimeProvider();
+        StatusPoller poller = CreatePoller([], timeProvider: time);
+        using var cancellation = new CancellationTokenSource();
+        Task firstRun = poller.RunAsync(cancellation.Token);
+        await time.WaitForTimerAsync(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        Task secondRun = poller.RunAsync(cancellation.Token);
+
+        try
+        {
+            Assert.Equal(1, time.CountActiveTimers(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1)));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => secondRun.WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await Task.WhenAll(firstRun, secondRun.ContinueWith(_ => { }, TaskScheduler.Default))
+                .WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
     public async Task SetReducedCadence_RecreatesTimerUsingCurrentSettings()
     {
         // Break caught: cadence mode changes leave the old timer active or use stale settings.
@@ -443,6 +587,15 @@ public sealed class StatusPollerTests : IDisposable
             lock (_gate)
             {
                 return _timers.Any(timer =>
+                    !timer.IsDisposed && timer.DueTime == dueTime && timer.Period == period);
+            }
+        }
+
+        public int CountActiveTimers(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_gate)
+            {
+                return _timers.Count(timer =>
                     !timer.IsDisposed && timer.DueTime == dueTime && timer.Period == period);
             }
         }
