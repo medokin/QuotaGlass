@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using AiStatus.Model;
@@ -139,6 +140,67 @@ public sealed class ClaudeProviderTests : IDisposable
 
         Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_EscapedOauthPropertyNamesReturnAuthExpired()
+    {
+        // Catches a scanner that rejects valid JSON escapes in known OAuth property names.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            "{\"claudeAiO\\u0061uth\":{\"accessT\\u006fken\":\"unit-test-access-token\",\"expires\\u0041t\":0}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.AuthExpired, snapshot.Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_LeadingZeroExpiresAtReturnsDegradedWithoutHttp()
+    {
+        // Catches a scanner that accepts a malformed direct JSON integer token.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":00}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, snapshot.Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_UnknownValueNestedBeyond64LevelsReturnsDegradedWithoutHttp()
+    {
+        // Catches recursive unknown-value skipping that can overflow the stack on hostile credential JSON.
+        string nested = new string('[', 65) + "null" + new string(']', 65);
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredential(
+            handler,
+            $"{{\"claudeAiOauth\":{{\"accessToken\":\"unit-test-access-token\",\"metadata\":{nested},\"expiresAt\":0}}}}");
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, snapshot.Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public void OpenCredentialStream_DisablesManagedReadAhead()
+    {
+        // Catches a production credential stream factory that silently restores FileStream's managed read buffer.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile("credentials.json", "{}");
+
+        using Stream stream = ClaudeProvider.OpenCredentialStream(credentialPath);
+        FieldInfo? strategyField = typeof(FileStream).GetField("_strategy", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(strategyField);
+
+        Assert.DoesNotContain("Buffered", strategyField!.GetValue(stream)!.GetType().Name, StringComparison.Ordinal);
     }
 
     [Fact]

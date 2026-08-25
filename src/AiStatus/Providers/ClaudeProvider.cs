@@ -28,7 +28,7 @@ public sealed class ClaudeProvider : IStatusProvider
         HttpMessageHandler handler,
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider = null)
-        : this(credentialPath, handler, severityFromPercent, timeProvider, File.OpenRead)
+        : this(credentialPath, handler, severityFromPercent, timeProvider, OpenCredentialStream)
     {
     }
 
@@ -49,6 +49,9 @@ public sealed class ClaudeProvider : IStatusProvider
     public string Id => "claude";
 
     public string Label => "Claude";
+
+    internal static Stream OpenCredentialStream(string credentialPath) =>
+        new FileStream(credentialPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, FileOptions.SequentialScan);
 
     public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
     {
@@ -293,6 +296,7 @@ public sealed class ClaudeProvider : IStatusProvider
 
     private sealed class CredentialScanner(Stream stream)
     {
+        private const int MaxUnknownContainerDepth = 64;
         private static readonly byte[] OAuthProperty = "claudeAiOauth"u8.ToArray();
         private static readonly byte[] AccessTokenProperty = "accessToken"u8.ToArray();
         private static readonly byte[] ExpiresAtProperty = "expiresAt"u8.ToArray();
@@ -385,33 +389,11 @@ public sealed class ClaudeProvider : IStatusProvider
             int length = 0;
             bool accessTokenMatches = true;
             bool expiresAtMatches = true;
-            bool escaped = false;
 
             while (true)
             {
-                int value = ReadByte();
-                if (value < 0)
-                {
-                    throw Incomplete();
-                }
-
-                if (escaped)
-                {
-                    accessTokenMatches = false;
-                    expiresAtMatches = false;
-                    escaped = false;
-                    continue;
-                }
-
-                if (value == '\\')
-                {
-                    accessTokenMatches = false;
-                    expiresAtMatches = false;
-                    escaped = true;
-                    continue;
-                }
-
-                if (value == '"')
+                int value = ReadPropertyCharacter();
+                if (value == -1)
                 {
                     if (accessTokenMatches && length == AccessTokenProperty.Length)
                     {
@@ -423,12 +405,12 @@ public sealed class ClaudeProvider : IStatusProvider
                         : CredentialField.None;
                 }
 
-                if (value < 0x20 || length >= AccessTokenProperty.Length || value != AccessTokenProperty[length])
+                if (value < 0 || length >= AccessTokenProperty.Length || value != AccessTokenProperty[length])
                 {
                     accessTokenMatches = false;
                 }
 
-                if (value < 0x20 || length >= ExpiresAtProperty.Length || value != ExpiresAtProperty[length])
+                if (value < 0 || length >= ExpiresAtProperty.Length || value != ExpiresAtProperty[length])
                 {
                     expiresAtMatches = false;
                 }
@@ -442,39 +424,21 @@ public sealed class ClaudeProvider : IStatusProvider
             Expect((byte)'"');
             int index = 0;
             bool matches = true;
-            bool escaped = false;
 
             while (true)
             {
-                int value = ReadByte();
-                if (value < 0)
-                {
-                    throw Incomplete();
-                }
-
-                if (escaped)
-                {
-                    matches = false;
-                    escaped = false;
-                    continue;
-                }
-
-                if (value == '\\')
-                {
-                    matches = false;
-                    escaped = true;
-                    continue;
-                }
-
-                if (value == '"')
+                int value = ReadPropertyCharacter();
+                if (value == -1)
                 {
                     return matches && index == expected.Length;
                 }
 
-                if (value < 0x20 || index >= expected.Length || value != expected[index++])
+                if (value < 0 || index >= expected.Length || value != expected[index])
                 {
                     matches = false;
                 }
+
+                index++;
             }
         }
 
@@ -556,40 +520,46 @@ public sealed class ClaudeProvider : IStatusProvider
                 first = ReadByte();
             }
 
-            if (first is < '0' or > '9')
+            if (first == '0')
+            {
+                ReadIntegerDelimiter();
+                return 0;
+            }
+
+            if (first is < '1' or > '9')
             {
                 throw Incomplete();
             }
 
-            long value = first - '0';
+            ulong maximum = negative ? (ulong)long.MaxValue + 1 : long.MaxValue;
+            ulong value = (uint)(first - '0');
             while (true)
             {
                 int next = ReadByte();
                 if (next is >= '0' and <= '9')
                 {
-                    try
-                    {
-                        value = checked((value * 10) + (next - '0'));
-                    }
-                    catch (OverflowException)
+                    uint digit = (uint)(next - '0');
+                    if (value > (maximum - digit) / 10)
                     {
                         throw Incomplete();
                     }
 
+                    value = (value * 10) + digit;
                     continue;
                 }
 
-                if (!IsValueDelimiter(next))
+                Unread(next);
+                ReadIntegerDelimiter();
+                if (!negative)
                 {
-                    throw Incomplete();
+                    return (long)value;
                 }
 
-                Unread(next);
-                return negative ? -value : value;
+                return value == (ulong)long.MaxValue + 1 ? long.MinValue : -(long)value;
             }
         }
 
-        private void SkipValue()
+        private void SkipValue(int depth = 0)
         {
             int first = ReadNonWhitespace();
             switch (first)
@@ -598,10 +568,20 @@ public sealed class ClaudeProvider : IStatusProvider
                     SkipStringBody();
                     return;
                 case '{':
-                    SkipObject();
+                    if (depth >= MaxUnknownContainerDepth)
+                    {
+                        throw Incomplete();
+                    }
+
+                    SkipObject(depth + 1);
                     return;
                 case '[':
-                    SkipArray();
+                    if (depth >= MaxUnknownContainerDepth)
+                    {
+                        throw Incomplete();
+                    }
+
+                    SkipArray(depth + 1);
                     return;
                 case 't':
                     ReadLiteral("rue"u8);
@@ -623,7 +603,7 @@ public sealed class ClaudeProvider : IStatusProvider
             }
         }
 
-        private void SkipObject()
+        private void SkipObject(int depth)
         {
             int next = ReadNonWhitespace();
             if (next == '}')
@@ -636,7 +616,7 @@ public sealed class ClaudeProvider : IStatusProvider
             {
                 SkipString();
                 Expect((byte)':');
-                SkipValue();
+                SkipValue(depth);
                 int separator = ReadNonWhitespace();
                 if (separator == '}')
                 {
@@ -650,7 +630,7 @@ public sealed class ClaudeProvider : IStatusProvider
             }
         }
 
-        private void SkipArray()
+        private void SkipArray(int depth)
         {
             int next = ReadNonWhitespace();
             if (next == ']')
@@ -661,7 +641,7 @@ public sealed class ClaudeProvider : IStatusProvider
             Unread(next);
             while (true)
             {
-                SkipValue();
+                SkipValue(depth);
                 int separator = ReadNonWhitespace();
                 if (separator == ']')
                 {
@@ -772,6 +752,74 @@ public sealed class ClaudeProvider : IStatusProvider
             }
 
             return value;
+        }
+
+        private int ReadPropertyCharacter()
+        {
+            int value = ReadByte();
+            if (value < 0 || value < 0x20)
+            {
+                throw Incomplete();
+            }
+
+            if (value == '"')
+            {
+                return -1;
+            }
+
+            if (value != '\\')
+            {
+                return value;
+            }
+
+            int escape = ReadByte();
+            return escape switch
+            {
+                '"' => '"',
+                '\\' => '\\',
+                '/' => '/',
+                'b' => '\b',
+                'f' => '\f',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'u' => ReadUnicodeEscape(),
+                _ => throw Incomplete()
+            };
+        }
+
+        private int ReadUnicodeEscape()
+        {
+            int value = 0;
+            for (int index = 0; index < 4; index++)
+            {
+                int digit = ReadByte();
+                value = digit switch
+                {
+                    >= '0' and <= '9' => (value * 16) + digit - '0',
+                    >= 'a' and <= 'f' => (value * 16) + digit - 'a' + 10,
+                    >= 'A' and <= 'F' => (value * 16) + digit - 'A' + 10,
+                    _ => throw Incomplete()
+                };
+            }
+
+            return value <= byte.MaxValue ? value : -2;
+        }
+
+        private void ReadIntegerDelimiter()
+        {
+            int delimiter = ReadByte();
+            while (delimiter is ' ' or '\t' or '\r' or '\n')
+            {
+                delimiter = ReadByte();
+            }
+
+            if (delimiter is not ',' and not '}')
+            {
+                throw Incomplete();
+            }
+
+            Unread(delimiter);
         }
 
         private int ReadByte()
