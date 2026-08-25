@@ -5,6 +5,5 @@
     <LangVersion>14</LangVersion>
     <Deterministic>true</Deterministic>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 </Project>
