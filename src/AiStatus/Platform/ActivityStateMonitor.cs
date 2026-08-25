@@ -15,6 +15,30 @@ internal interface IActivityEventSource : IDisposable
     event Action? PowerModeChanged;
 }
 
+internal interface IActivitySampler : IDisposable
+{
+    event Action? SampleRequested;
+}
+
+internal sealed class PeriodicActivitySampler : IActivitySampler
+{
+    internal static readonly TimeSpan SamplingInterval = TimeSpan.FromSeconds(30);
+    private readonly System.Threading.Timer _timer;
+
+    public PeriodicActivitySampler()
+    {
+        _timer = new System.Threading.Timer(
+            static state => ((PeriodicActivitySampler)state!).SampleRequested?.Invoke(),
+            this,
+            SamplingInterval,
+            SamplingInterval);
+    }
+
+    public event Action? SampleRequested;
+
+    public void Dispose() => _timer.Dispose();
+}
+
 internal sealed class WindowsActivityState : IActivityState
 {
     public bool IsOnBattery =>
@@ -102,50 +126,112 @@ internal sealed class SystemActivityEventSource : IActivityEventSource
 public sealed class ActivityStateMonitor : IDisposable
 {
     private static readonly TimeSpan IdleThreshold = TimeSpan.FromMinutes(5);
+    private readonly object _gate = new();
     private readonly IActivityEventSource _events;
     private readonly IActivityState _state;
+    private readonly IActivitySampler _sampler;
     private bool _isLocked;
+    private bool _isReducedCadence;
     private bool _disposed;
 
     public ActivityStateMonitor()
-        : this(new SystemActivityEventSource(), new WindowsActivityState())
+        : this(
+            new SystemActivityEventSource(),
+            new WindowsActivityState(),
+            new PeriodicActivitySampler())
     {
     }
 
-    internal ActivityStateMonitor(IActivityEventSource events, IActivityState state)
+    internal ActivityStateMonitor(
+        IActivityEventSource events,
+        IActivityState state,
+        IActivitySampler sampler)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(sampler);
 
         _events = events;
         _state = state;
+        _sampler = sampler;
+        _isReducedCadence = ComputeReducedCadence();
         _events.SessionLockChanged += OnSessionLockChanged;
         _events.PowerModeChanged += OnPowerModeChanged;
+        _sampler.SampleRequested += OnSampleRequested;
     }
 
     public event EventHandler? Changed;
 
-    public bool IsReducedCadence =>
-        _isLocked || (_state.IsOnBattery && _state.IdleDuration >= IdleThreshold);
+    public bool IsReducedCadence
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _isReducedCadence;
+            }
+        }
+    }
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_gate)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
         }
 
-        _disposed = true;
         _events.SessionLockChanged -= OnSessionLockChanged;
         _events.PowerModeChanged -= OnPowerModeChanged;
+        _sampler.SampleRequested -= OnSampleRequested;
+        _sampler.Dispose();
         _events.Dispose();
     }
 
     private void OnSessionLockChanged(bool locked)
     {
-        _isLocked = locked;
-        Changed?.Invoke(this, EventArgs.Empty);
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _isLocked = locked;
+        }
+
+        EvaluateAndNotify();
     }
 
-    private void OnPowerModeChanged() => Changed?.Invoke(this, EventArgs.Empty);
+    private void OnPowerModeChanged() => EvaluateAndNotify();
+
+    private void OnSampleRequested() => EvaluateAndNotify();
+
+    private void EvaluateAndNotify()
+    {
+        bool changed;
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            bool reducedCadence = ComputeReducedCadence();
+            changed = reducedCadence != _isReducedCadence;
+            _isReducedCadence = reducedCadence;
+        }
+
+        if (changed)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private bool ComputeReducedCadence() =>
+        _isLocked || (_state.IsOnBattery && _state.IdleDuration >= IdleThreshold);
 }

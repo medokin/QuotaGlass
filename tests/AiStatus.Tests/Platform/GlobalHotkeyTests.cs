@@ -71,6 +71,30 @@ public sealed class GlobalHotkeyTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_NativeRegistrationExceptionIsLoggedWithoutThrowing()
+    {
+        var native = new FakeHotkeyNative
+        {
+            RegistrationException = new InvalidOperationException("Synthetic native failure."),
+        };
+        var window = new FakeHotkeyWindow();
+        string logPath = Path.Combine(_directory.Path, "registration-exception.log");
+
+        using var hotkey = new GlobalHotkey(
+            window,
+            native,
+            "Ctrl+Alt+A",
+            new RollingFileLog(logPath));
+
+        string logText = File.ReadAllText(logPath);
+        Assert.Contains(
+            " platform failed exception=InvalidOperationException",
+            logText);
+        Assert.DoesNotContain("Synthetic native failure", logText);
+        Assert.Equal(0, native.UnregisterCalls);
+    }
+
+    [Fact]
     public void WindowMessage_ForRegisteredHotkeyRaisesPressed()
     {
         var native = new FakeHotkeyNative();
@@ -97,6 +121,22 @@ public sealed class GlobalHotkeyTests : IDisposable
         Assert.Equal(1, window.RemoveHookCalls);
     }
 
+    [Fact]
+    public void Constructor_LogFailureAfterRegistrationRollsBackAndRethrowsOriginal()
+    {
+        var native = new FakeHotkeyNative();
+        var window = new FakeHotkeyWindow();
+        var failure = new InvalidOperationException("Synthetic log failure.");
+        var log = new FakePlatformLog(LogOutcome.Registered, failure);
+
+        InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(
+            () => new GlobalHotkey(window, native, "Ctrl+Alt+A", log));
+
+        Assert.Same(failure, thrown);
+        Assert.Equal(1, native.UnregisterCalls);
+        Assert.Equal(1, window.RemoveHookCalls);
+    }
+
     public void Dispose() => _directory.Dispose();
 
     private RollingFileLog CreateLog() =>
@@ -105,12 +145,18 @@ public sealed class GlobalHotkeyTests : IDisposable
     private sealed class FakeHotkeyNative : IHotkeyNative
     {
         public bool RegistrationResult { get; init; } = true;
+        public Exception? RegistrationException { get; init; }
         public uint RegisteredModifiers { get; private set; }
         public uint RegisteredKey { get; private set; }
         public int UnregisterCalls { get; private set; }
 
         public bool RegisterHotKey(IntPtr windowHandle, int id, uint modifiers, uint key)
         {
+            if (RegistrationException is not null)
+            {
+                throw RegistrationException;
+            }
+
             RegisteredModifiers = modifiers;
             RegisteredKey = key;
             return RegistrationResult;
@@ -142,6 +188,17 @@ public sealed class GlobalHotkeyTests : IDisposable
         {
             bool handled = false;
             _hook!(Handle, 0x0312, new IntPtr(GlobalHotkey.HotkeyId), IntPtr.Zero, ref handled);
+        }
+    }
+
+    private sealed class FakePlatformLog(LogOutcome failureOutcome, Exception failure) : IPlatformLog
+    {
+        public void Write(LogOutcome outcome, Exception? exception = null)
+        {
+            if (outcome == failureOutcome)
+            {
+                throw failure;
+            }
         }
     }
 }

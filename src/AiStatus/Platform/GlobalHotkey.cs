@@ -17,6 +17,19 @@ internal interface IHotkeyWindow
     void RemoveHook(HwndSourceHook hook);
 }
 
+internal interface IPlatformLog
+{
+    void Write(LogOutcome outcome, Exception? exception = null);
+}
+
+internal sealed class RollingFilePlatformLog(RollingFileLog log) : IPlatformLog
+{
+    private readonly RollingFileLog _log = log ?? throw new ArgumentNullException(nameof(log));
+
+    public void Write(LogOutcome outcome, Exception? exception = null) =>
+        _log.Write(LogArea.Platform, outcome, exception: exception);
+}
+
 internal sealed class HwndSourceHotkeyWindow(HwndSource source) : IHotkeyWindow
 {
     private readonly HwndSource _source = source ?? throw new ArgumentNullException(nameof(source));
@@ -57,13 +70,17 @@ public sealed class GlobalHotkey : IDisposable
     private const uint KeyA = 0x41;
     private readonly IHotkeyWindow _window;
     private readonly IHotkeyNative _native;
-    private readonly RollingFileLog _log;
+    private readonly IPlatformLog _log;
     private readonly HwndSourceHook _hook;
     private bool _registered;
     private bool _disposed;
 
     public GlobalHotkey(HwndSource source, string configuredChord, RollingFileLog log)
-        : this(new HwndSourceHotkeyWindow(source), new Win32HotkeyNative(), configuredChord, log)
+        : this(
+            new HwndSourceHotkeyWindow(source),
+            new Win32HotkeyNative(),
+            configuredChord,
+            new RollingFilePlatformLog(log))
     {
     }
 
@@ -72,6 +89,15 @@ public sealed class GlobalHotkey : IDisposable
         IHotkeyNative native,
         string configuredChord,
         RollingFileLog log)
+        : this(window, native, configuredChord, new RollingFilePlatformLog(log))
+    {
+    }
+
+    internal GlobalHotkey(
+        IHotkeyWindow window,
+        IHotkeyNative native,
+        string configuredChord,
+        IPlatformLog log)
     {
         ArgumentNullException.ThrowIfNull(window);
         ArgumentNullException.ThrowIfNull(native);
@@ -81,29 +107,46 @@ public sealed class GlobalHotkey : IDisposable
         _native = native;
         _log = log;
         _hook = WindowHook;
-        _window.AddHook(_hook);
-
-        HotkeyChord chord;
-        if (!TryParse(configuredChord, out chord))
-        {
-            _log.Write(LogArea.Platform, LogOutcome.Invalid);
-            chord = new HotkeyChord(ModifierControl | ModifierAlt, KeyA);
-        }
-
+        bool hookAdded = false;
         try
         {
-            _registered = _native.RegisterHotKey(
-                _window.Handle,
-                HotkeyId,
-                chord.Modifiers,
-                chord.Key);
-            _log.Write(
-                LogArea.Platform,
-                _registered ? LogOutcome.Registered : LogOutcome.Failed);
+            _window.AddHook(_hook);
+            hookAdded = true;
+
+            HotkeyChord chord;
+            if (!TryParse(configuredChord, out chord))
+            {
+                _log.Write(LogOutcome.Invalid);
+                chord = new HotkeyChord(ModifierControl | ModifierAlt, KeyA);
+            }
+
+            try
+            {
+                _registered = _native.RegisterHotKey(
+                    _window.Handle,
+                    HotkeyId,
+                    chord.Modifiers,
+                    chord.Key);
+            }
+            catch (Exception exception)
+            {
+                TryLogRegistrationFailure(exception);
+                return;
+            }
+
+            if (_registered)
+            {
+                _log.Write(LogOutcome.Registered);
+            }
+            else
+            {
+                TryLogRegistrationFailure();
+            }
         }
-        catch (Exception exception)
+        catch
         {
-            _log.Write(LogArea.Platform, LogOutcome.Failed, exception: exception);
+            RollBackAcquisition(hookAdded);
+            throw;
         }
     }
 
@@ -122,19 +165,55 @@ public sealed class GlobalHotkey : IDisposable
             if (_registered)
             {
                 bool unregistered = _native.UnregisterHotKey(_window.Handle, HotkeyId);
-                _log.Write(
-                    LogArea.Platform,
-                    unregistered ? LogOutcome.Unregistered : LogOutcome.Failed);
+                _log.Write(unregistered ? LogOutcome.Unregistered : LogOutcome.Failed);
             }
         }
         catch (Exception exception)
         {
-            _log.Write(LogArea.Platform, LogOutcome.Failed, exception: exception);
+            _log.Write(LogOutcome.Failed, exception);
         }
         finally
         {
             _registered = false;
             _window.RemoveHook(_hook);
+        }
+    }
+
+    private void RollBackAcquisition(bool hookAdded)
+    {
+        if (_registered)
+        {
+            try
+            {
+                _native.UnregisterHotKey(_window.Handle, HotkeyId);
+            }
+            catch (Exception)
+            {
+            }
+
+            _registered = false;
+        }
+
+        if (hookAdded)
+        {
+            try
+            {
+                _window.RemoveHook(_hook);
+            }
+            catch (Exception)
+            {
+            }
+        }
+    }
+
+    private void TryLogRegistrationFailure(Exception? exception = null)
+    {
+        try
+        {
+            _log.Write(LogOutcome.Failed, exception);
+        }
+        catch (Exception)
+        {
         }
     }
 
