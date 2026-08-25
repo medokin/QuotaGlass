@@ -469,6 +469,146 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task ReportUpdated_NoContextHandlerCanSynchronouslyPollAgain()
+    {
+        // Break caught: inline notification under the poll gate deadlocks a synchronous reentrant poll.
+        FakeStatusProvider provider = new(
+            "claude",
+            (invocation, _) => Task.FromResult(FakeStatusProvider.Snapshot(
+                "claude",
+                planLabel: invocation.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        StatusPoller poller = await Task.Run(() => CreatePoller([provider]));
+        var handlerCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int notifications = 0;
+        poller.ReportUpdated += (_, _) =>
+        {
+            if (Interlocked.Increment(ref notifications) == 1)
+            {
+                poller.PollOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+                handlerCompleted.TrySetResult();
+            }
+        };
+
+        Task<StatusReport> outerPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+
+        await outerPoll.WaitAsync(TimeSpan.FromMilliseconds(300));
+        await handlerCompleted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(2, provider.InvocationCount);
+    }
+
+    [Fact]
+    public async Task ReportUpdated_DeliversSerializedPublicationsInOrderWithoutBlockingPolls()
+    {
+        // Break caught: a slow first handler blocks later publication or permits out-of-order delivery.
+        FakeStatusProvider provider = new(
+            "claude",
+            (invocation, _) => Task.FromResult(FakeStatusProvider.Snapshot(
+                "claude",
+                planLabel: invocation.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        StatusPoller poller = await Task.Run(() => CreatePoller([provider]));
+        var firstHandlerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseFirstHandler = new ManualResetEventSlim();
+        var deliveries = new ConcurrentQueue<string?>();
+        poller.ReportUpdated += (_, report) =>
+        {
+            string? plan = Assert.Single(report.Providers).PlanLabel;
+            deliveries.Enqueue(plan);
+            if (plan == "1")
+            {
+                firstHandlerStarted.TrySetResult();
+                releaseFirstHandler.Wait(TimeSpan.FromSeconds(1));
+            }
+            else
+            {
+                secondDelivered.TrySetResult();
+            }
+        };
+
+        Task<StatusReport> firstPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+        await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        Task<StatusReport> secondPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+
+        try
+        {
+            await Task.WhenAll(firstPoll, secondPoll).WaitAsync(TimeSpan.FromMilliseconds(300));
+        }
+        finally
+        {
+            releaseFirstHandler.Set();
+        }
+
+        await secondDelivered.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(["1", "2"], deliveries);
+    }
+
+    [Fact]
+    public async Task ReportUpdated_HandlerFailureIsLoggedAndDoesNotStopDelivery()
+    {
+        // Break caught: one external handler exception escapes polling, leaks text, or stops later delivery.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string logPath = Path.Combine(directory.Path, "poller.log");
+        FakeStatusProvider provider = FakeStatusProvider.Returning(
+            "claude",
+            FakeStatusProvider.Snapshot("claude"));
+        StatusPoller poller = await Task.Run(() => new StatusPoller(
+            [provider],
+            Settings,
+            new RollingFileLog(logPath)));
+        var healthyHandlerCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        poller.ReportUpdated += (_, _) => throw new InvalidOperationException("handler secret");
+        poller.ReportUpdated += (_, _) => healthyHandlerCalled.TrySetResult();
+
+        await poller.PollOnceAsync(CancellationToken.None).WaitAsync(TimeSpan.FromMilliseconds(300));
+        await healthyHandlerCalled.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+
+        string log = File.ReadAllText(logPath);
+        Assert.Contains(" ui failed exception=InvalidOperationException", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler secret", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShutdownDrainsAlreadyPublishedNotification()
+    {
+        // Break caught: shutdown abandons a notification that was published before cancellation.
+        var time = new RecordingTimeProvider();
+        FakeStatusProvider provider = FakeStatusProvider.Returning(
+            "claude",
+            FakeStatusProvider.Snapshot("claude"));
+        StatusPoller poller = await Task.Run(() => CreatePoller([provider], timeProvider: time));
+        var handlerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseHandler = new ManualResetEventSlim();
+        poller.ReportUpdated += (_, _) =>
+        {
+            handlerStarted.TrySetResult();
+            releaseHandler.Wait(TimeSpan.FromSeconds(1));
+            handlerCompleted.TrySetResult();
+        };
+        using var cancellation = new CancellationTokenSource();
+        Task run = poller.RunAsync(cancellation.Token);
+        RecordingTimer cadence = await time.WaitForTimerAsync(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+
+        poller.RequestRefresh();
+        await handlerStarted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        cancellation.Cancel();
+
+        try
+        {
+            await cadence.Disposed.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+            Assert.False(run.IsCompleted);
+        }
+        finally
+        {
+            releaseHandler.Set();
+        }
+
+        await run.WaitAsync(TimeSpan.FromMilliseconds(300));
+        await handlerCompleted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+    }
+
+    [Fact]
     public async Task RunAsync_CancellationStopsActivePollAndDisposesTimer()
     {
         // Break caught: shutdown leaves a cadence timer or provider wait abandoned.
@@ -615,6 +755,9 @@ public sealed class StatusPollerTests : IDisposable
 
         public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
+        public TaskCompletionSource Disposed { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public bool Change(TimeSpan dueTime, TimeSpan period)
         {
             if (IsDisposed)
@@ -635,7 +778,11 @@ public sealed class StatusPollerTests : IDisposable
             }
         }
 
-        public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _disposed, 1);
+            Disposed.TrySetResult();
+        }
 
         public ValueTask DisposeAsync()
         {
