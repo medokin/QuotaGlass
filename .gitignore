@@ -10,6 +10,8 @@ publish/
 # Visual Studio / Rider
 .vs/
 .idea/
+.worktrees/
+.superpowers/
 
 # Local runtime state (never commit: may contain account identifiers)
 log.txt
