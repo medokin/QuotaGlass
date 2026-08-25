@@ -255,7 +255,23 @@ public sealed class ActivityStateMonitor : IDisposable
                 handlers = Changed;
             }
 
-            handlers?.Invoke(this, EventArgs.Empty);
+            if (handlers is null)
+            {
+                return;
+            }
+
+            foreach (Delegate subscriber in handlers.GetInvocationList())
+            {
+                lock (_gate)
+                {
+                    if (_disposed)
+                    {
+                        return;
+                    }
+                }
+
+                ((EventHandler)subscriber)(this, EventArgs.Empty);
+            }
         }
     }
 

@@ -266,6 +266,37 @@ public sealed class ActivityStateMonitorTests
         Assert.True(sampler.IsDisposed);
     }
 
+    [Fact]
+    public async Task ChangedHandler_DisposeStopsRemainingSubscribersAndLaterNotifications()
+    {
+        var events = new FakeActivityEventSource();
+        var state = new FakeActivityState
+        {
+            IsOnBattery = true,
+            IdleDuration = TimeSpan.FromMinutes(4),
+        };
+        var sampler = new FakeActivitySampler();
+        var monitor = new ActivityStateMonitor(events, state, sampler);
+        int firstSubscriberCalls = 0;
+        int secondSubscriberCalls = 0;
+        monitor.Changed += (_, _) =>
+        {
+            Interlocked.Increment(ref firstSubscriberCalls);
+            monitor.Dispose();
+        };
+        monitor.Changed += (_, _) => Interlocked.Increment(ref secondSubscriberCalls);
+
+        state.IdleDuration = TimeSpan.FromMinutes(5);
+        await Task.Run(sampler.RaiseSampleRequested).WaitAsync(TimeSpan.FromSeconds(2));
+        state.IdleDuration = TimeSpan.Zero;
+        sampler.RaiseSampleRequested();
+
+        Assert.Equal(1, Volatile.Read(ref firstSubscriberCalls));
+        Assert.Equal(0, Volatile.Read(ref secondSubscriberCalls));
+        Assert.True(events.IsDisposed);
+        Assert.True(sampler.IsDisposed);
+    }
+
     private sealed class FakeActivitySampler : IActivitySampler
     {
         private Action? _sampleRequested;
