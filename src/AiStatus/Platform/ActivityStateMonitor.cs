@@ -127,6 +127,9 @@ public sealed class ActivityStateMonitor : IDisposable
 {
     private static readonly TimeSpan IdleThreshold = TimeSpan.FromMinutes(5);
     private readonly object _gate = new();
+    private readonly object _notificationDrainGate = new();
+    private readonly TaskCompletionSource _sourcesDisposed = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly IActivityEventSource _events;
     private readonly IActivityState _state;
     private readonly IActivitySampler _sampler;
@@ -154,7 +157,7 @@ public sealed class ActivityStateMonitor : IDisposable
         _events = events;
         _state = state;
         _sampler = sampler;
-        _isReducedCadence = ComputeReducedCadence();
+        _isReducedCadence = ComputeReducedCadence(isLocked: false);
         _events.SessionLockChanged += OnSessionLockChanged;
         _events.PowerModeChanged += OnPowerModeChanged;
         _sampler.SampleRequested += OnSampleRequested;
@@ -175,21 +178,34 @@ public sealed class ActivityStateMonitor : IDisposable
 
     public void Dispose()
     {
+        bool ownsDisposal;
         lock (_gate)
         {
-            if (_disposed)
-            {
-                return;
-            }
-
+            ownsDisposal = !_disposed;
             _disposed = true;
         }
 
-        _events.SessionLockChanged -= OnSessionLockChanged;
-        _events.PowerModeChanged -= OnPowerModeChanged;
-        _sampler.SampleRequested -= OnSampleRequested;
-        _sampler.Dispose();
-        _events.Dispose();
+        if (ownsDisposal)
+        {
+            try
+            {
+                _events.SessionLockChanged -= OnSessionLockChanged;
+                _events.PowerModeChanged -= OnPowerModeChanged;
+                _sampler.SampleRequested -= OnSampleRequested;
+                _sampler.Dispose();
+                _events.Dispose();
+            }
+            finally
+            {
+                _sourcesDisposed.TrySetResult();
+                DrainNotifications();
+            }
+        }
+        else
+        {
+            _sourcesDisposed.Task.GetAwaiter().GetResult();
+            DrainNotifications();
+        }
     }
 
     private void OnSessionLockChanged(bool locked)
@@ -213,25 +229,45 @@ public sealed class ActivityStateMonitor : IDisposable
 
     private void EvaluateAndNotify()
     {
-        bool changed;
-        lock (_gate)
+        lock (_notificationDrainGate)
         {
-            if (_disposed)
+            bool isLocked;
+            lock (_gate)
             {
-                return;
+                if (_disposed)
+                {
+                    return;
+                }
+
+                isLocked = _isLocked;
             }
 
-            bool reducedCadence = ComputeReducedCadence();
-            changed = reducedCadence != _isReducedCadence;
-            _isReducedCadence = reducedCadence;
-        }
+            bool reducedCadence = ComputeReducedCadence(isLocked);
+            EventHandler? handlers;
+            lock (_gate)
+            {
+                if (_disposed || reducedCadence == _isReducedCadence)
+                {
+                    return;
+                }
 
-        if (changed)
-        {
-            Changed?.Invoke(this, EventArgs.Empty);
+                _isReducedCadence = reducedCadence;
+                handlers = Changed;
+            }
+
+            handlers?.Invoke(this, EventArgs.Empty);
         }
     }
 
-    private bool ComputeReducedCadence() =>
-        _isLocked || (_state.IsOnBattery && _state.IdleDuration >= IdleThreshold);
+    private void DrainNotifications()
+    {
+        // Monitor locks are reentrant. Dispose called by Changed returns safely while
+        // the outer notification still owns this gate, preventing any later handler.
+        lock (_notificationDrainGate)
+        {
+        }
+    }
+
+    private bool ComputeReducedCadence(bool isLocked) =>
+        isLocked || (_state.IsOnBattery && _state.IdleDuration >= IdleThreshold);
 }
