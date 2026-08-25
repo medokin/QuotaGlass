@@ -32,9 +32,16 @@ public sealed class ThresholdWatcher
 
         foreach (ProviderSnapshot provider in next.Providers)
         {
+            ProviderSnapshot? previousProvider = previous?.Providers
+                .FirstOrDefault(candidate => candidate.Id == provider.Id);
+
             if (provider.Health == HealthState.AuthExpired)
             {
-                AddAuthExpiredAlert(provider, alerts);
+                if (previous is null || previousProvider?.Health != HealthState.AuthExpired)
+                {
+                    AddAuthExpiredAlert(provider, alerts);
+                }
+
                 continue;
             }
 
@@ -44,9 +51,6 @@ public sealed class ThresholdWatcher
             {
                 continue;
             }
-
-            ProviderSnapshot? previousProvider = previous?.Providers
-                .FirstOrDefault(candidate => candidate.Id == provider.Id);
 
             foreach (UsageWindow window in provider.Windows)
             {

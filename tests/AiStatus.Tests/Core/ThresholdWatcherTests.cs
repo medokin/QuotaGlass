@@ -91,6 +91,17 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
+    public void Evaluate_FreshWatcherWithPersistentlyExpiredProviderIsSilent()
+    {
+        // Break caught: a watcher created after expiry announces it without an initial snapshot or health transition.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset cycle = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
+        StatusReport expired = Report(10, cycle, HealthState.AuthExpired);
+
+        Assert.Empty(watcher.Evaluate(expired, expired));
+    }
+
+    [Fact]
     public void Evaluate_InitiallyAuthExpiredEmitsOnceThenRecoversAndReexpires()
     {
         // Break caught: initial expiry is silent or recovery fails to re-arm a later expiry notification.
