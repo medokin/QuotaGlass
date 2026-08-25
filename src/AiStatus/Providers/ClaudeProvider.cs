@@ -1,9 +1,11 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AiStatus.Model;
 
@@ -17,6 +19,7 @@ public sealed class ClaudeProvider : IStatusProvider
     private readonly HttpMessageHandler _handler;
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<string, Stream> _openCredential;
     private DateTimeOffset _profileCachedAt;
     private string? _cachedPlanLabel;
 
@@ -25,11 +28,22 @@ public sealed class ClaudeProvider : IStatusProvider
         HttpMessageHandler handler,
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider = null)
+        : this(credentialPath, handler, severityFromPercent, timeProvider, File.OpenRead)
+    {
+    }
+
+    internal ClaudeProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential)
     {
         _credentialPath = credentialPath;
         _handler = handler;
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _openCredential = openCredential;
     }
 
     public string Id => "claude";
@@ -97,21 +111,122 @@ public sealed class ClaudeProvider : IStatusProvider
 
     private Credential ReadCredential()
     {
-        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(_credentialPath));
-        JsonElement root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object ||
-            !root.TryGetProperty("claudeAiOauth", out JsonElement oauth) ||
-            oauth.ValueKind != JsonValueKind.Object ||
-            !oauth.TryGetProperty("accessToken", out JsonElement accessToken) ||
-            accessToken.ValueKind != JsonValueKind.String ||
-            string.IsNullOrWhiteSpace(accessToken.GetString()) ||
-            !oauth.TryGetProperty("expiresAt", out JsonElement expiresAt) ||
-            !expiresAt.TryGetInt64(out long expiresAtUnixMilliseconds))
-        {
-            throw new InvalidDataException("Claude credentials are incomplete.");
-        }
+        using Stream stream = _openCredential(_credentialPath);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
+        int bytesInBuffer = 0;
+        var state = new JsonReaderState();
+        bool awaitsOauthObject = false;
+        bool inOauthObject = false;
+        int oauthObjectDepth = -1;
+        CredentialField field = CredentialField.None;
+        string? accessToken = null;
+        long? expiresAtUnixMilliseconds = null;
 
-        return new Credential(accessToken.GetString()!, DateTimeOffset.FromUnixTimeMilliseconds(expiresAtUnixMilliseconds));
+        try
+        {
+            while (true)
+            {
+                if (bytesInBuffer == buffer.Length)
+                {
+                    byte[] expandedBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                    Buffer.BlockCopy(buffer, 0, expandedBuffer, 0, bytesInBuffer);
+                    CryptographicOperations.ZeroMemory(buffer);
+                    ArrayPool<byte>.Shared.Return(buffer);
+                    buffer = expandedBuffer;
+                }
+
+                int read = stream.Read(buffer, bytesInBuffer, buffer.Length - bytesInBuffer);
+                bool isFinalBlock = read == 0;
+                bytesInBuffer += read;
+                var reader = new Utf8JsonReader(buffer.AsSpan(0, bytesInBuffer), isFinalBlock, state);
+
+                while (reader.Read())
+                {
+                    if (awaitsOauthObject)
+                    {
+                        if (reader.TokenType != JsonTokenType.StartObject)
+                        {
+                            throw new InvalidDataException("Claude credentials are incomplete.");
+                        }
+
+                        awaitsOauthObject = false;
+                        inOauthObject = true;
+                        oauthObjectDepth = reader.CurrentDepth;
+                        continue;
+                    }
+
+                    if (!inOauthObject)
+                    {
+                        if (reader.TokenType == JsonTokenType.PropertyName &&
+                            reader.CurrentDepth == 1 &&
+                            reader.ValueTextEquals("claudeAiOauth"))
+                        {
+                            awaitsOauthObject = true;
+                        }
+
+                        continue;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == oauthObjectDepth + 1)
+                    {
+                        field = reader.ValueTextEquals("accessToken")
+                            ? CredentialField.AccessToken
+                            : reader.ValueTextEquals("expiresAt")
+                                ? CredentialField.ExpiresAt
+                                : CredentialField.None;
+                        continue;
+                    }
+
+                    if (field == CredentialField.AccessToken && reader.TokenType == JsonTokenType.String)
+                    {
+                        accessToken = reader.GetString();
+                        field = CredentialField.None;
+                        continue;
+                    }
+
+                    if (field == CredentialField.ExpiresAt && reader.TokenType == JsonTokenType.Number)
+                    {
+                        if (!reader.TryGetInt64(out long expiresAt))
+                        {
+                            throw new InvalidDataException("Claude credentials are incomplete.");
+                        }
+
+                        expiresAtUnixMilliseconds = expiresAt;
+                        field = CredentialField.None;
+                        continue;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == oauthObjectDepth)
+                    {
+                        if (string.IsNullOrWhiteSpace(accessToken) || expiresAtUnixMilliseconds is not long expiresAt)
+                        {
+                            throw new InvalidDataException("Claude credentials are incomplete.");
+                        }
+
+                        return new Credential(accessToken, DateTimeOffset.FromUnixTimeMilliseconds(expiresAt));
+                    }
+                }
+
+                int consumed = checked((int)reader.BytesConsumed);
+                state = reader.CurrentState;
+                int unconsumed = bytesInBuffer - consumed;
+                if (unconsumed > 0)
+                {
+                    Buffer.BlockCopy(buffer, consumed, buffer, 0, unconsumed);
+                }
+
+                bytesInBuffer = unconsumed;
+                if (isFinalBlock)
+                {
+                    throw new InvalidDataException("Claude credentials are incomplete.");
+                }
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private async Task<ProfileResult> GetProfileAsync(
@@ -289,4 +404,6 @@ public sealed class ClaudeProvider : IStatusProvider
     private sealed record Credential(string AccessToken, DateTimeOffset ExpiresAt);
 
     private sealed record ProfileResult(string? PlanLabel, bool AuthExpired, string? Error);
+
+    private enum CredentialField { None, AccessToken, ExpiresAt }
 }

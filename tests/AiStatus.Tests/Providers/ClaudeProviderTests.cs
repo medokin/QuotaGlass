@@ -61,6 +61,24 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_ExpiredCredentialSkipsTrailingRefreshToken()
+    {
+        // Catches a whole-document credential reader that materializes a refresh token after the required OAuth fields.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        ClaudeProvider provider = CreateProviderWithCredentialStream(
+            handler,
+            new RefreshTokenTailStream("""
+                {"claudeAiOauth":{"accessToken":"unit-test-access-token","expiresAt":0},"refreshToken":"sentinel-refresh-token"}
+                """));
+
+        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.AuthExpired, snapshot.Health);
+        Assert.Equal("re-auth: run claude login", snapshot.Error);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task FetchAsync_MalformedCredentialDoesNotExposeItsToken()
     {
         // Catches a provider that lets a credential parse exception escape with authentication material.
@@ -194,6 +212,14 @@ public sealed class ClaudeProviderTests : IDisposable
             percent => SeverityPolicy.FromPercent(percent, 80, 95));
     }
 
+    private static ClaudeProvider CreateProviderWithCredentialStream(HttpMessageHandler handler, Stream credentialStream) =>
+        new(
+            "credential-stream.json",
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => credentialStream);
+
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
@@ -222,5 +248,53 @@ public sealed class ClaudeProviderTests : IDisposable
         {
             directory.Dispose();
         }
+    }
+
+    private sealed class RefreshTokenTailStream : Stream
+    {
+        private readonly byte[] _safePrefix;
+        private bool _safePrefixRead;
+
+        public RefreshTokenTailStream(string credential)
+        {
+            int protectedTail = credential.IndexOf(",\"refreshToken\"", StringComparison.Ordinal);
+            _safePrefix = Encoding.UTF8.GetBytes(credential[..protectedTail]);
+        }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_safePrefixRead)
+            {
+                throw new Xunit.Sdk.XunitException("refreshToken must not be materialized");
+            }
+
+            _safePrefixRead = true;
+            _safePrefix.AsSpan().CopyTo(buffer.AsSpan(offset, count));
+            return _safePrefix.Length;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
