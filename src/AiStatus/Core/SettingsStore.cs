@@ -102,9 +102,15 @@ public sealed class SettingsStore : IDisposable
         await _persistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            ThrowIfDisposedLocked();
+            AppSettings lastKnownGood;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                lastKnownGood = _current;
+            }
+
             (bool isValid, AppSettings fileSettings) = await ReadAsync(cancellationToken).ConfigureAwait(false);
-            AppSettings current = isValid ? fileSettings : AppSettings.Default;
+            AppSettings current = isValid ? fileSettings : lastKnownGood;
 
             AppSettings updated = update(current)
                 ?? throw new ArgumentException("The settings updater returned null.", nameof(update));

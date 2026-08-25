@@ -123,6 +123,60 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_InvalidExternalEditPreservesLastKnownGoodSettings()
+    {
+        // Break caught: malformed external JSON makes a narrow overlay update reset unrelated settings to defaults.
+        using var delayedWatcherStore = new SettingsStore(_path, TimeSpan.FromHours(1));
+        AppSettings lastKnownGood = AppSettings.Default with
+        {
+            PollInterval = TimeSpan.FromSeconds(45),
+            IdleInterval = TimeSpan.FromMinutes(7),
+            Providers = AppSettings.Default.Providers.SetItem("ollama", new ProviderSettings(false)),
+            OverlayVisible = true,
+            Hotkey = "Ctrl+Shift+L",
+            WarningPercent = 68,
+            CriticalPercent = 92,
+            Autostart = true,
+        };
+        await delayedWatcherStore.SaveAsync(lastKnownGood, CancellationToken.None);
+        await File.WriteAllTextAsync(_path, "{broken", CancellationToken.None);
+
+        AppSettings updated = await delayedWatcherStore.UpdateAsync(
+            settings => settings with
+            {
+                OverlayCorner = OverlayCorner.Custom,
+                OverlayMonitorId = "SECONDARY",
+                OverlayPosition = new OverlayPosition(2300, 110),
+            },
+            CancellationToken.None);
+
+        Assert.Equal(lastKnownGood.PollInterval, updated.PollInterval);
+        Assert.Equal(lastKnownGood.IdleInterval, updated.IdleInterval);
+        Assert.Equal(lastKnownGood.Providers.OrderBy(pair => pair.Key), updated.Providers.OrderBy(pair => pair.Key));
+        Assert.Equal(lastKnownGood.OverlayVisible, updated.OverlayVisible);
+        Assert.Equal(lastKnownGood.Hotkey, updated.Hotkey);
+        Assert.Equal(lastKnownGood.WarningPercent, updated.WarningPercent);
+        Assert.Equal(lastKnownGood.CriticalPercent, updated.CriticalPercent);
+        Assert.Equal(lastKnownGood.Autostart, updated.Autostart);
+        Assert.Equal(OverlayCorner.Custom, updated.OverlayCorner);
+        Assert.Equal("SECONDARY", updated.OverlayMonitorId);
+        Assert.Equal(new OverlayPosition(2300, 110), updated.OverlayPosition);
+
+        AppSettings saved = await delayedWatcherStore.LoadAsync(CancellationToken.None);
+        Assert.Equal(updated.PollInterval, saved.PollInterval);
+        Assert.Equal(updated.IdleInterval, saved.IdleInterval);
+        Assert.Equal(updated.Providers.OrderBy(pair => pair.Key), saved.Providers.OrderBy(pair => pair.Key));
+        Assert.Equal(updated.OverlayVisible, saved.OverlayVisible);
+        Assert.Equal(updated.OverlayCorner, saved.OverlayCorner);
+        Assert.Equal(updated.OverlayMonitorId, saved.OverlayMonitorId);
+        Assert.Equal(updated.OverlayPosition, saved.OverlayPosition);
+        Assert.Equal(updated.Hotkey, saved.Hotkey);
+        Assert.Equal(updated.WarningPercent, saved.WarningPercent);
+        Assert.Equal(updated.CriticalPercent, saved.CriticalPercent);
+        Assert.Equal(updated.Autostart, saved.Autostart);
+    }
+
+    [Fact]
     public async Task UpdateAsync_SerializesConcurrentReadModifyWriteOperations()
     {
         // Break caught: concurrent narrow updates read the same state and lose completed updates.
