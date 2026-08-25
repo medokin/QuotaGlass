@@ -190,6 +190,7 @@ public sealed class ThresholdWatcher
                 .Where(pair =>
                     pair.Key.ProviderId == provider.Id &&
                     pair.Key.Kind != AlertKind.AuthExpired &&
+                    pair.Key.CycleResetsAt is null &&
                     pair.Key.WindowLabel is string label &&
                     !currentLabels.Contains(label))
                 .OrderBy(pair => pair.Value)
@@ -197,8 +198,8 @@ public sealed class ThresholdWatcher
                 .Select(pair => pair.Key)
                 .ToArray();
 
-            // Unknown or renamed windows cannot be correlated forever. Keeping the newest
-            // 32 bounds memory at the cost of possibly re-alerting an evicted unknown cycle.
+            // Null-reset windows cannot be correlated forever. Keeping the newest 32 bounds
+            // memory at the cost of possibly re-alerting an evicted unknown cycle.
             foreach (FiredKey key in missing.Take(
                 Math.Max(0, missing.Length - MaximumRetainedMissingQuotaKeysPerProvider)))
             {

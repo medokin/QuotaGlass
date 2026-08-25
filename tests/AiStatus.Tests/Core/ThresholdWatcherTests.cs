@@ -238,9 +238,9 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
-    public void Evaluate_RepeatedRenamedWindowsKeepOnlyBoundedMissingKeys()
+    public void Evaluate_RepeatedKnownCycleRenamesRetainOldestKeyUntilReset()
     {
-        // Break caught: every renamed provider window adds another retained key until process exit.
+        // Break caught: the missing-key cap evicts an active known-cycle key and repeats its alert.
         var watcher = new ThresholdWatcher(80, 95);
         DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-08-25T12:00:00Z");
         DateTimeOffset reset = checkedAt.AddDays(7);
@@ -255,7 +255,37 @@ public sealed class ThresholdWatcherTests
             previous = next;
         }
 
+        StatusReport oldestBeforeReset = At(
+            Report(80, reset, windowLabel: "renamed-0"),
+            checkedAt.AddMinutes(201));
+
+        Assert.Empty(watcher.Evaluate(previous, oldestBeforeReset));
+        Assert.Equal(200, watcher.FiredKeyCount);
+    }
+
+    [Fact]
+    public void Evaluate_RepeatedUnknownCycleRenamesKeepOnlyBoundedMissingKeys()
+    {
+        // Break caught: removing the cap from known cycles also accidentally removes it from unknown cycles.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-08-25T12:00:00Z");
+        StatusReport? previous = null;
+
+        for (int index = 0; index < 200; index++)
+        {
+            StatusReport next = UnknownResetReport(
+                $"renamed-{index}",
+                80,
+                checkedAt.AddMinutes(index));
+            Assert.Single(watcher.Evaluate(previous, next));
+            previous = next;
+        }
+
         Assert.InRange(watcher.FiredKeyCount, 1, 33);
+        Assert.Single(watcher.Evaluate(previous, UnknownResetReport(
+            "renamed-0",
+            80,
+            checkedAt.AddMinutes(201))));
     }
 
     [Fact]
