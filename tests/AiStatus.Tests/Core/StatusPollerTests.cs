@@ -469,6 +469,59 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task ReportUpdated_ThrowingCapturedContextNeverFallsBackOffContextOrDuplicates()
+    {
+        // Break caught: a failed context post invokes UI handlers on the pump thread and again from a queued callback.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string logPath = Path.Combine(directory.Path, "poller.log");
+        var context = new QueueThenThrowSynchronizationContext();
+        SynchronizationContext? previous = SynchronizationContext.Current;
+        StatusPoller poller;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            poller = new StatusPoller(
+                [new FakeStatusProvider(
+                    "claude",
+                    (invocation, _) => Task.FromResult(FakeStatusProvider.Snapshot(
+                        "claude",
+                        planLabel: invocation.ToString(System.Globalization.CultureInfo.InvariantCulture))))],
+                Settings,
+                new RollingFileLog(logPath));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        var deliveries = new ConcurrentQueue<(string? Plan, bool OnContext)>();
+        poller.ReportUpdated += (_, report) => deliveries.Enqueue((
+            Assert.Single(report.Providers).PlanLabel,
+            context.IsExecuting));
+
+        await Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+        await context.FirstPostAttempted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        await Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+        await context.SecondPostQueued.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+
+        try
+        {
+            Assert.Empty(deliveries);
+        }
+        finally
+        {
+            context.RunAll();
+        }
+
+        Assert.Equal(["1", "2"], deliveries.Select(delivery => delivery.Plan));
+        Assert.All(deliveries, delivery => Assert.True(delivery.OnContext));
+        string log = File.ReadAllText(logPath);
+        Assert.Contains(" ui failed exception=InvalidOperationException", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("dispatch secret", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReportUpdated_NoContextHandlerCanSynchronouslyPollAgain()
     {
         // Break caught: inline notification under the poll gate deadlocks a synchronous reentrant poll.
@@ -680,6 +733,53 @@ public sealed class StatusPollerTests : IDisposable
         {
             Assert.True(_callbacks.TryDequeue(out var callback));
             callback.Callback(callback.State);
+        }
+    }
+
+    private sealed class QueueThenThrowSynchronizationContext : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _callbacks = new();
+        private int _postCount;
+        private int _executing;
+
+        public bool IsExecuting => Volatile.Read(ref _executing) != 0;
+
+        public TaskCompletionSource FirstPostAttempted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondPostQueued { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _callbacks.Enqueue((d, state));
+            int post = Interlocked.Increment(ref _postCount);
+            if (post == 1)
+            {
+                FirstPostAttempted.TrySetResult();
+                throw new InvalidOperationException("dispatch secret");
+            }
+
+            if (post == 2)
+            {
+                SecondPostQueued.TrySetResult();
+            }
+        }
+
+        public void RunAll()
+        {
+            while (_callbacks.TryDequeue(out var callback))
+            {
+                Volatile.Write(ref _executing, 1);
+                try
+                {
+                    callback.Callback(callback.State);
+                }
+                finally
+                {
+                    Volatile.Write(ref _executing, 0);
+                }
+            }
         }
     }
 

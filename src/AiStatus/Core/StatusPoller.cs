@@ -370,7 +370,6 @@ public sealed class StatusPoller
         catch (Exception exception)
         {
             LogHandlerFailure(exception);
-            InvokeReportUpdatedHandlers(report);
             completion.TrySetResult();
         }
 
