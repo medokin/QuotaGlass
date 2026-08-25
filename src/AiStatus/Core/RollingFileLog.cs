@@ -6,6 +6,9 @@ namespace AiStatus.Core;
 public sealed class RollingFileLog
 {
     private const long MaximumBytes = 1_048_576;
+    private const int MaximumAreaLength = 64;
+    private const string RedactedArea = "[redacted-area]";
+    private const string RedactedOutcome = "[redacted-outcome]";
     private readonly object _gate = new();
     private readonly string _path;
 
@@ -23,12 +26,8 @@ public sealed class RollingFileLog
         ArgumentException.ThrowIfNullOrWhiteSpace(area);
         ArgumentException.ThrowIfNullOrWhiteSpace(outcome);
 
-        string line = FormatLine(area, outcome, statusCode, exception);
+        string line = FormatLine(SanitizeArea(area), SanitizeOutcome(outcome), statusCode, exception);
         byte[] bytes = Encoding.UTF8.GetBytes(line);
-        if (bytes.Length > MaximumBytes)
-        {
-            Array.Resize(ref bytes, (int)MaximumBytes);
-        }
 
         lock (_gate)
         {
@@ -54,23 +53,83 @@ public sealed class RollingFileLog
 
     private static string FormatLine(string area, string outcome, int? statusCode, Exception? exception)
     {
-        var line = new StringBuilder()
+        string prefix = new StringBuilder()
             .Append(DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
             .Append(' ')
             .Append(area)
             .Append(' ')
-            .Append(outcome);
+            .ToString();
+        var suffix = new StringBuilder();
 
         if (statusCode is int code)
         {
-            line.Append(" status=").Append(code);
+            suffix.Append(" status=").Append(code);
         }
 
         if (exception is not null)
         {
-            line.Append(" exception=").Append(exception.GetType().Name);
+            suffix.Append(" exception=").Append(exception.GetType().Name);
         }
 
-        return line.AppendLine().ToString();
+        suffix.AppendLine();
+        int availableOutcomeBytes = checked((int)(MaximumBytes - Encoding.UTF8.GetByteCount(prefix) - Encoding.UTF8.GetByteCount(suffix.ToString())));
+        return prefix + TruncateOnRuneBoundary(outcome, availableOutcomeBytes) + suffix;
+    }
+
+    private static string SanitizeArea(string area)
+    {
+        if (area.Length > MaximumAreaLength || area.Any(character => !IsAreaCharacter(character)))
+        {
+            return RedactedArea;
+        }
+
+        return area;
+    }
+
+    private static string SanitizeOutcome(string outcome)
+    {
+        return ContainsUnsafeOutcomeContent(outcome) || !IsSafeOutcomeToken(outcome) ? RedactedOutcome : outcome;
+    }
+
+    private static bool IsAreaCharacter(char character)
+    {
+        return char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-';
+    }
+
+    private static bool ContainsUnsafeOutcomeContent(string outcome)
+    {
+        return outcome.IndexOfAny(['\r', '\n']) >= 0 ||
+            outcome.Contains('@', StringComparison.Ordinal) ||
+            outcome.Contains("bearer", StringComparison.OrdinalIgnoreCase) ||
+            outcome.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSafeOutcomeToken(string outcome)
+    {
+        return outcome.EnumerateRunes().All(rune => Rune.IsLetterOrDigit(rune) || rune.Value is '.' or '_' or '-');
+    }
+
+    private static string TruncateOnRuneBoundary(string value, int maximumBytes)
+    {
+        if (Encoding.UTF8.GetByteCount(value) <= maximumBytes)
+        {
+            return value;
+        }
+
+        var truncated = new StringBuilder();
+        int usedBytes = 0;
+        foreach (Rune rune in value.EnumerateRunes())
+        {
+            int runeBytes = rune.Utf8SequenceLength;
+            if (usedBytes + runeBytes > maximumBytes)
+            {
+                break;
+            }
+
+            truncated.Append(rune.ToString());
+            usedBytes += runeBytes;
+        }
+
+        return truncated.ToString();
     }
 }
