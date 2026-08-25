@@ -3,12 +3,35 @@ using System.IO;
 
 namespace AiStatus.Core;
 
+public enum LogArea
+{
+    Application,
+    Settings,
+    Poller,
+    Provider,
+    Platform,
+    Ui,
+}
+
+public enum LogOutcome
+{
+    Started,
+    Succeeded,
+    Failed,
+    TimedOut,
+    Degraded,
+    AuthExpired,
+    Unreachable,
+    Disabled,
+    Changed,
+    Invalid,
+    Registered,
+    Unregistered,
+}
+
 public sealed class RollingFileLog
 {
     private const long MaximumBytes = 1_048_576;
-    private const int MaximumAreaLength = 64;
-    private const string RedactedArea = "[redacted-area]";
-    private const string RedactedOutcome = "[redacted-outcome]";
     private readonly object _gate = new();
     private readonly string _path;
 
@@ -21,12 +44,19 @@ public sealed class RollingFileLog
         Directory.CreateDirectory(directory);
     }
 
-    public void Write(string area, string outcome, int? statusCode = null, Exception? exception = null)
+    public void Write(LogArea area, LogOutcome outcome, int? statusCode = null, Exception? exception = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(area);
-        ArgumentException.ThrowIfNullOrWhiteSpace(outcome);
+        if (!Enum.IsDefined(area))
+        {
+            throw new ArgumentOutOfRangeException(nameof(area));
+        }
 
-        string line = FormatLine(SanitizeArea(area), SanitizeOutcome(outcome), statusCode, exception);
+        if (!Enum.IsDefined(outcome))
+        {
+            throw new ArgumentOutOfRangeException(nameof(outcome));
+        }
+
+        string line = FormatLine(ToToken(area), ToToken(outcome), statusCode, exception);
         byte[] bytes = Encoding.UTF8.GetBytes(line);
 
         lock (_gate)
@@ -76,39 +106,6 @@ public sealed class RollingFileLog
         return prefix + TruncateOnRuneBoundary(outcome, availableOutcomeBytes) + suffix;
     }
 
-    private static string SanitizeArea(string area)
-    {
-        if (area.Length > MaximumAreaLength || area.Any(character => !IsAreaCharacter(character)))
-        {
-            return RedactedArea;
-        }
-
-        return area;
-    }
-
-    private static string SanitizeOutcome(string outcome)
-    {
-        return ContainsUnsafeOutcomeContent(outcome) || !IsSafeOutcomeToken(outcome) ? RedactedOutcome : outcome;
-    }
-
-    private static bool IsAreaCharacter(char character)
-    {
-        return char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-';
-    }
-
-    private static bool ContainsUnsafeOutcomeContent(string outcome)
-    {
-        return outcome.IndexOfAny(['\r', '\n']) >= 0 ||
-            outcome.Contains('@', StringComparison.Ordinal) ||
-            outcome.Contains("bearer", StringComparison.OrdinalIgnoreCase) ||
-            outcome.Contains("token", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsSafeOutcomeToken(string outcome)
-    {
-        return outcome.EnumerateRunes().All(rune => Rune.IsLetterOrDigit(rune) || rune.Value is '.' or '_' or '-');
-    }
-
     private static string TruncateOnRuneBoundary(string value, int maximumBytes)
     {
         if (Encoding.UTF8.GetByteCount(value) <= maximumBytes)
@@ -131,5 +128,39 @@ public sealed class RollingFileLog
         }
 
         return truncated.ToString();
+    }
+
+    private static string ToToken(LogArea area)
+    {
+        return area switch
+        {
+            LogArea.Application => "application",
+            LogArea.Settings => "settings",
+            LogArea.Poller => "poller",
+            LogArea.Provider => "provider",
+            LogArea.Platform => "platform",
+            LogArea.Ui => "ui",
+            _ => throw new InvalidOperationException("Validated log area was not mapped."),
+        };
+    }
+
+    private static string ToToken(LogOutcome outcome)
+    {
+        return outcome switch
+        {
+            LogOutcome.Started => "started",
+            LogOutcome.Succeeded => "succeeded",
+            LogOutcome.Failed => "failed",
+            LogOutcome.TimedOut => "timed-out",
+            LogOutcome.Degraded => "degraded",
+            LogOutcome.AuthExpired => "auth-expired",
+            LogOutcome.Unreachable => "unreachable",
+            LogOutcome.Disabled => "disabled",
+            LogOutcome.Changed => "changed",
+            LogOutcome.Invalid => "invalid",
+            LogOutcome.Registered => "registered",
+            LogOutcome.Unregistered => "unregistered",
+            _ => throw new InvalidOperationException("Validated log outcome was not mapped."),
+        };
     }
 }
