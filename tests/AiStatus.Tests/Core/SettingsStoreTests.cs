@@ -88,6 +88,41 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_RereadsValidExternalEditBeforeApplyingNarrowChange()
+    {
+        // Break caught: drag persistence overwrites a valid external edit before the debounced watcher reload runs.
+        using var delayedWatcherStore = new SettingsStore(_path, TimeSpan.FromHours(1));
+        await delayedWatcherStore.LoadAsync(CancellationToken.None);
+        AppSettings external = AppSettings.Default with
+        {
+            Hotkey = "Ctrl+Shift+U",
+            WarningPercent = 71,
+            OverlayVisible = true,
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(external), CancellationToken.None);
+
+        await delayedWatcherStore.UpdateAsync(
+            settings => settings with
+            {
+                OverlayCorner = OverlayCorner.Custom,
+                OverlayMonitorId = "SECONDARY",
+                OverlayPosition = new OverlayPosition(2200, 100),
+            },
+            CancellationToken.None);
+
+        AppSettings saved = await delayedWatcherStore.LoadAsync(CancellationToken.None);
+        Assert.Equal("Ctrl+Shift+U", saved.Hotkey);
+        Assert.Equal(71, saved.WarningPercent);
+        Assert.True(saved.OverlayVisible);
+        Assert.Equal(external.Providers.OrderBy(pair => pair.Key), saved.Providers.OrderBy(pair => pair.Key));
+        Assert.Equal(external.PollInterval, saved.PollInterval);
+        Assert.Equal(external.CriticalPercent, saved.CriticalPercent);
+        Assert.Equal(OverlayCorner.Custom, saved.OverlayCorner);
+        Assert.Equal("SECONDARY", saved.OverlayMonitorId);
+        Assert.Equal(new OverlayPosition(2200, 100), saved.OverlayPosition);
+    }
+
+    [Fact]
     public async Task UpdateAsync_SerializesConcurrentReadModifyWriteOperations()
     {
         // Break caught: concurrent narrow updates read the same state and lose completed updates.

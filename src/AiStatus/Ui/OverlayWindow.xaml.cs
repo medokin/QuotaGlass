@@ -21,7 +21,7 @@ public partial class OverlayWindow : Window
     private readonly SettingsStore? _settingsStore;
     private readonly WindowPlacementService _placementService;
     private readonly OverlayPositionPersistence? _positionPersistence;
-    private readonly OverlayDragState _dragState = new();
+    private readonly OverlayDragState _dragState;
     private Point _dragOffset;
 
     public OverlayWindow()
@@ -35,9 +35,18 @@ public partial class OverlayWindow : Window
     }
 
     internal OverlayWindow(SettingsStore? settingsStore, WindowPlacementService placementService)
+        : this(settingsStore, placementService, new OverlayDragState())
+    {
+    }
+
+    internal OverlayWindow(
+        SettingsStore? settingsStore,
+        WindowPlacementService placementService,
+        OverlayDragState dragState)
     {
         _settingsStore = settingsStore;
         _placementService = placementService ?? throw new ArgumentNullException(nameof(placementService));
+        _dragState = dragState ?? throw new ArgumentNullException(nameof(dragState));
         if (settingsStore is not null)
         {
             _positionPersistence = new OverlayPositionPersistence(settingsStore);
@@ -47,6 +56,7 @@ public partial class OverlayWindow : Window
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         IsVisibleChanged += OnIsVisibleChanged;
+        LostMouseCapture += OnLostMouseCapture;
     }
 
     public ObservableCollection<ProviderSnapshot> Providers { get; } = [];
@@ -79,6 +89,7 @@ public partial class OverlayWindow : Window
     {
         SourceInitialized -= OnSourceInitialized;
         IsVisibleChanged -= OnIsVisibleChanged;
+        LostMouseCapture -= OnLostMouseCapture;
         if (_positionPersistence is not null)
         {
             _positionPersistence.Failed -= OnPositionPersistenceFailed;

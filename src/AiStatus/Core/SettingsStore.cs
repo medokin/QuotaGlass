@@ -14,16 +14,27 @@ public sealed class SettingsStore : IDisposable
     private readonly object _gate = new();
     private readonly SemaphoreSlim _persistenceGate = new(1, 1);
     private readonly string _path;
+    private readonly TimeSpan _reloadDelay;
     private readonly FileSystemWatcher _watcher;
     private System.Threading.Timer? _reloadTimer;
     private AppSettings _current = AppSettings.Default;
     private bool _disposed;
 
     public SettingsStore(string path)
+        : this(path, TimeSpan.FromMilliseconds(250))
+    {
+    }
+
+    internal SettingsStore(string path, TimeSpan reloadDelay)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (reloadDelay < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reloadDelay));
+        }
 
         _path = Path.GetFullPath(path);
+        _reloadDelay = reloadDelay;
         string directory = Path.GetDirectoryName(_path)
             ?? throw new ArgumentException("The settings path must include a directory.", nameof(path));
         Directory.CreateDirectory(directory);
@@ -91,12 +102,9 @@ public sealed class SettingsStore : IDisposable
         await _persistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            AppSettings current;
-            lock (_gate)
-            {
-                ThrowIfDisposed();
-                current = _current;
-            }
+            ThrowIfDisposedLocked();
+            (bool isValid, AppSettings fileSettings) = await ReadAsync(cancellationToken).ConfigureAwait(false);
+            AppSettings current = isValid ? fileSettings : AppSettings.Default;
 
             AppSettings updated = update(current)
                 ?? throw new ArgumentException("The settings updater returned null.", nameof(update));
@@ -185,7 +193,7 @@ public sealed class SettingsStore : IDisposable
             }
 
             _reloadTimer ??= new System.Threading.Timer(static state => ((SettingsStore)state!).ReloadFromWatcher(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            _reloadTimer.Change(TimeSpan.FromMilliseconds(250), Timeout.InfiniteTimeSpan);
+            _reloadTimer.Change(_reloadDelay, Timeout.InfiniteTimeSpan);
         }
     }
 
