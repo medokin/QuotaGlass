@@ -68,6 +68,19 @@ public sealed class GlobalHotkeyTests : IDisposable
             new RollingFileLog(logPath));
 
         Assert.Contains(" platform failed", File.ReadAllText(logPath));
+        Assert.False(hotkey.IsRegistered);
+    }
+
+    [Fact]
+    public void Constructor_SuccessExposesRegisteredState()
+    {
+        using var hotkey = new GlobalHotkey(
+            new FakeHotkeyWindow(),
+            new FakeHotkeyNative(),
+            "Ctrl+Alt+A",
+            CreateLog());
+
+        Assert.True(hotkey.IsRegistered);
     }
 
     [Fact]

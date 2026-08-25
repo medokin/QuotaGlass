@@ -1,0 +1,295 @@
+using System.Collections.Immutable;
+
+namespace AiStatus.Core;
+
+internal interface IUiDispatcher
+{
+    void Post(Action action);
+    Task InvokeAsync(Action action);
+}
+
+internal interface IHotkeyRegistration : IDisposable
+{
+    event EventHandler? Pressed;
+    bool IsRegistered { get; }
+}
+
+internal sealed class AppSettingsState
+{
+    private AppSettings _current;
+
+    public AppSettingsState(AppSettings initial)
+    {
+        _current = initial ?? throw new ArgumentNullException(nameof(initial));
+    }
+
+    public AppSettings Current => Volatile.Read(ref _current);
+
+    public void Update(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        Volatile.Write(ref _current, settings);
+    }
+}
+
+internal sealed class ApplicationSettingsCoordinator : IDisposable
+{
+    private readonly AppSettingsState _state;
+    private readonly ThresholdWatcher _watcher;
+    private readonly Func<string, IHotkeyRegistration> _createHotkey;
+    private readonly Action<AppSettings> _applyOverlay;
+    private readonly Action _requestRefresh;
+    private readonly Func<Task> _toggleOverlay;
+    private readonly RollingFileLog _log;
+    private IHotkeyRegistration _hotkey;
+    private bool _disposed;
+
+    public ApplicationSettingsCoordinator(
+        AppSettingsState state,
+        ThresholdWatcher watcher,
+        IHotkeyRegistration hotkey,
+        Func<string, IHotkeyRegistration> createHotkey,
+        Action<AppSettings> applyOverlay,
+        Action requestRefresh,
+        Func<Task> toggleOverlay,
+        RollingFileLog log)
+    {
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        _watcher = watcher ?? throw new ArgumentNullException(nameof(watcher));
+        _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
+        _createHotkey = createHotkey ?? throw new ArgumentNullException(nameof(createHotkey));
+        _applyOverlay = applyOverlay ?? throw new ArgumentNullException(nameof(applyOverlay));
+        _requestRefresh = requestRefresh ?? throw new ArgumentNullException(nameof(requestRefresh));
+        _toggleOverlay = toggleOverlay ?? throw new ArgumentNullException(nameof(toggleOverlay));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _hotkey.Pressed += OnHotkeyPressed;
+    }
+
+    public void Apply(AppSettings next)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        AppSettings previous = _state.Current;
+
+        bool thresholdsChanged = previous.WarningPercent != next.WarningPercent ||
+            previous.CriticalPercent != next.CriticalPercent;
+        if (thresholdsChanged)
+        {
+            _watcher.UpdateThresholds(next.WarningPercent, next.CriticalPercent);
+        }
+
+        if (!string.Equals(previous.Hotkey, next.Hotkey, StringComparison.OrdinalIgnoreCase))
+        {
+            ReplaceHotkey(next.Hotkey);
+        }
+
+        _state.Update(next);
+
+        if (OverlayChanged(previous, next))
+        {
+            try
+            {
+                _applyOverlay(next);
+            }
+            catch (Exception exception)
+            {
+                TryLogFailure(exception);
+            }
+        }
+
+        if (thresholdsChanged || CadenceOrProvidersChanged(previous, next))
+        {
+            _requestRefresh();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _hotkey.Pressed -= OnHotkeyPressed;
+        _hotkey.Dispose();
+    }
+
+    private void ReplaceHotkey(string chord)
+    {
+        IHotkeyRegistration? replacement = null;
+        try
+        {
+            replacement = _createHotkey(chord);
+            if (!replacement.IsRegistered)
+            {
+                replacement.Dispose();
+                TryLogFailure();
+                return;
+            }
+
+            replacement.Pressed += OnHotkeyPressed;
+            IHotkeyRegistration previous = _hotkey;
+            _hotkey = replacement;
+            replacement = null;
+            previous.Pressed -= OnHotkeyPressed;
+            previous.Dispose();
+        }
+        catch (Exception exception)
+        {
+            replacement?.Dispose();
+            TryLogFailure(exception);
+        }
+    }
+
+    private void OnHotkeyPressed(object? sender, EventArgs args) =>
+        _ = ToggleOverlaySafelyAsync();
+
+    private async Task ToggleOverlaySafelyAsync()
+    {
+        try
+        {
+            await _toggleOverlay();
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+        }
+    }
+
+    private void TryLogFailure(Exception? exception = null)
+    {
+        try
+        {
+            _log.Write(LogArea.Platform, LogOutcome.Failed, exception: exception);
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private static bool OverlayChanged(AppSettings previous, AppSettings next) =>
+        previous.OverlayVisible != next.OverlayVisible ||
+        previous.OverlayCorner != next.OverlayCorner ||
+        !string.Equals(previous.OverlayMonitorId, next.OverlayMonitorId, StringComparison.Ordinal) ||
+        previous.OverlayPosition != next.OverlayPosition;
+
+    private static bool CadenceOrProvidersChanged(AppSettings previous, AppSettings next) =>
+        previous.PollInterval != next.PollInterval ||
+        previous.IdleInterval != next.IdleInterval ||
+        !ProvidersEqual(previous.Providers, next.Providers);
+
+    private static bool ProvidersEqual(
+        ImmutableDictionary<string, ProviderSettings> first,
+        ImmutableDictionary<string, ProviderSettings> second) =>
+        first.Count == second.Count &&
+        first.All(pair =>
+            second.TryGetValue(pair.Key, out ProviderSettings? settings) &&
+            pair.Value == settings);
+}
+
+internal sealed class ApplicationShutdownCoordinator
+{
+    private readonly object _gate = new();
+    private readonly CancellationTokenSource _applicationCancellation;
+    private readonly Func<Task?> _getPollLoop;
+    private readonly IUiDispatcher _dispatcher;
+    private readonly Action _disposeOwnedResources;
+    private readonly Action _shutdownApplication;
+    private readonly RollingFileLog _log;
+    private Task? _shutdownTask;
+    private int _ownedResourcesDisposed;
+
+    public ApplicationShutdownCoordinator(
+        CancellationTokenSource applicationCancellation,
+        Func<Task?> getPollLoop,
+        IUiDispatcher dispatcher,
+        Action disposeOwnedResources,
+        Action shutdownApplication,
+        RollingFileLog log)
+    {
+        _applicationCancellation = applicationCancellation ?? throw new ArgumentNullException(nameof(applicationCancellation));
+        _getPollLoop = getPollLoop ?? throw new ArgumentNullException(nameof(getPollLoop));
+        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _disposeOwnedResources = disposeOwnedResources ?? throw new ArgumentNullException(nameof(disposeOwnedResources));
+        _shutdownApplication = shutdownApplication ?? throw new ArgumentNullException(nameof(shutdownApplication));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+    }
+
+    public Task ShutdownAsync()
+    {
+        lock (_gate)
+        {
+            return _shutdownTask ??= RunShutdownAsync();
+        }
+    }
+
+    public void ShutdownFallback()
+    {
+        CancelApplication();
+        DisposeOwnedResourcesOnce();
+    }
+
+    private async Task RunShutdownAsync()
+    {
+        CancelApplication();
+        Task? pollLoop = _getPollLoop();
+        if (pollLoop is not null)
+        {
+            try
+            {
+                await pollLoop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_applicationCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception)
+            {
+                TryLogFailure(exception);
+            }
+        }
+
+        try
+        {
+            await _dispatcher.InvokeAsync(() =>
+            {
+                DisposeOwnedResourcesOnce();
+                _shutdownApplication();
+            }).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+        }
+    }
+
+    private void CancelApplication()
+    {
+        try
+        {
+            _applicationCancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void DisposeOwnedResourcesOnce()
+    {
+        if (Interlocked.Exchange(ref _ownedResourcesDisposed, 1) == 0)
+        {
+            _disposeOwnedResources();
+        }
+    }
+
+    private void TryLogFailure(Exception exception)
+    {
+        try
+        {
+            _log.Write(LogArea.Application, LogOutcome.Failed, exception: exception);
+        }
+        catch (Exception)
+        {
+        }
+    }
+}

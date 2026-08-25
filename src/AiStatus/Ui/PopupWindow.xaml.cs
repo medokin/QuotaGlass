@@ -8,7 +8,7 @@ using Size = System.Windows.Size;
 
 namespace AiStatus.Ui;
 
-public partial class PopupWindow : Window
+public partial class PopupWindow : Window, IStatusWindow
 {
     private readonly WindowPlacementService _placementService;
 

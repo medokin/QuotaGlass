@@ -37,6 +37,31 @@ public sealed class OllamaProviderTests
     }
 
     [Fact]
+    public async Task FetchAsync_AddsNoStoreToEveryRequest()
+    {
+        // Catches localhost status responses being reused by an intermediary cache.
+        var cacheDirectives = new List<bool>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            cacheDirectives.Add(request.Headers.CacheControl?.NoStore == true);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    request.RequestUri!.AbsolutePath.EndsWith("version", StringComparison.Ordinal)
+                        ? ReadFixture("ollama-version.json")
+                        : ReadFixture("ollama-ps.json"),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+
+        ProviderSnapshot snapshot = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Ok, snapshot.Health);
+        Assert.Equal([true, true], cacheDirectives);
+    }
+
+    [Fact]
     public async Task FetchAsync_CallerCancellationPropagates()
     {
         // Catches an exception handler that converts caller-requested cancellation into an unreachable snapshot.

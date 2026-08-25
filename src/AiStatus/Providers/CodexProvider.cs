@@ -104,6 +104,7 @@ public sealed class CodexProvider : IStatusProvider
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, UsageUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
         request.Headers.Add("chatgpt-account-id", credential.AccountId);
         return await client.SendAsync(request, cancellationToken);
     }

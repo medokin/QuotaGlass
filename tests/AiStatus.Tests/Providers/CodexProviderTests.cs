@@ -63,6 +63,23 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_AddsNoStoreToUsageRequest()
+    {
+        // Catches pooled clients that permit credential-bound usage responses to be cached.
+        bool noStore = false;
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            noStore = request.Headers.CacheControl?.NoStore == true;
+            return JsonResponse(ReadFixture("codex-wham.json"), "application/json");
+        });
+
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Ok, snapshot.Health);
+        Assert.True(noStore);
+    }
+
+    [Fact]
     public async Task FetchAsync_UnauthorizedResponseReturnsAuthExpired()
     {
         // Catches an expired Codex credential reported as a generic transport failure.

@@ -152,6 +152,8 @@ public sealed class GlobalHotkey : IDisposable
 
     public event EventHandler? Pressed;
 
+    public bool IsRegistered => _registered;
+
     public void Dispose()
     {
         if (_disposed)

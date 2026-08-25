@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AiStatus.Model;
 
@@ -23,11 +24,11 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
         try
         {
             using var client = new HttpClient(_handler, disposeHandler: false);
-            using HttpResponseMessage versionResponse = await client.GetAsync(VersionUri, cancellationToken);
+            using HttpResponseMessage versionResponse = await SendAsync(client, VersionUri, cancellationToken);
             versionResponse.EnsureSuccessStatusCode();
             using JsonDocument version = JsonDocument.Parse(await versionResponse.Content.ReadAsStreamAsync(cancellationToken));
 
-            using HttpResponseMessage processResponse = await client.GetAsync(ProcessUri, cancellationToken);
+            using HttpResponseMessage processResponse = await SendAsync(client, ProcessUri, cancellationToken);
             processResponse.EnsureSuccessStatusCode();
             using JsonDocument processes = JsonDocument.Parse(await processResponse.Content.ReadAsStreamAsync(cancellationToken));
 
@@ -58,5 +59,15 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
                 fetchedAt,
                 0);
         }
+    }
+
+    private static async Task<HttpResponseMessage> SendAsync(
+        HttpClient client,
+        Uri uri,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+        return await client.SendAsync(request, cancellationToken);
     }
 }

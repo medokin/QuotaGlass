@@ -12,7 +12,7 @@ using Size = System.Windows.Size;
 
 namespace AiStatus.Ui;
 
-public partial class OverlayWindow : Window
+public partial class OverlayWindow : Window, IOverlayStatusWindow
 {
     private const int ExtendedStyleIndex = -20;
     private const long NoActivateStyle = 0x08000000L;
@@ -82,6 +82,15 @@ public partial class OverlayWindow : Window
         foreach (ProviderSnapshot provider in providers)
         {
             Providers.Add(provider);
+        }
+    }
+
+    public void ApplySettings(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (IsVisible)
+        {
+            ApplyConfiguredPlacement(settings);
         }
     }
 

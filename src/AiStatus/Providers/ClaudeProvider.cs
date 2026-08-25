@@ -161,6 +161,7 @@ public sealed class ClaudeProvider : IStatusProvider
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
         request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
         return await client.SendAsync(request, cancellationToken);
     }

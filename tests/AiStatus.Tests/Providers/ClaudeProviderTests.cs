@@ -297,6 +297,26 @@ public sealed class ClaudeProviderTests : IDisposable
         Assert.DoesNotContain("unit-test-access-token", snapshot.Error ?? string.Empty, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task FetchAsync_AddsNoStoreToEveryRequest()
+    {
+        // Catches pooled clients that permit credential-bound usage responses to be cached.
+        var cacheDirectives = new List<bool>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            cacheDirectives.Add(request.Headers.CacheControl?.NoStore == true);
+            return JsonResponse(
+                request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                    ? ReadFixture("claude-usage.json")
+                    : ReadFixture("claude-profile.json"));
+        });
+
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Ok, snapshot.Health);
+        Assert.Equal([true, true], cacheDirectives);
+    }
+
     private ClaudeProvider CreateProviderWithFixtures(Func<double?, Severity>? severityFromPercent = null) =>
         CreateProvider(new StubHttpMessageHandler(request => JsonResponse(
             request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
