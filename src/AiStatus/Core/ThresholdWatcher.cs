@@ -153,7 +153,7 @@ public sealed class ThresholdWatcher
             .FirstOrDefault(candidate => candidate.Label == key.WindowLabel);
         if (window is null)
         {
-            return true;
+            return false;
         }
 
         return key.CycleResetsAt is not null

@@ -417,6 +417,40 @@ public sealed class StatusPollerTests : IDisposable
         Assert.True(restored.IsDisposed);
     }
 
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 5)]
+    public async Task InitialCadence_QueuesNoRefreshAndExplicitStartupRefreshPollsOnce(
+        bool reduced,
+        int expectedMinutes)
+    {
+        // Break caught: initial reduced cadence plus the explicit startup refresh produces two immediate polls.
+        var time = new RecordingTimeProvider();
+        FakeStatusProvider provider = FakeStatusProvider.Blocking("claude");
+        StatusPoller poller = CreatePoller(
+            [provider],
+            timeProvider: time);
+        poller.SetInitialReducedCadence(reduced);
+        using var cancellation = new CancellationTokenSource();
+
+        Task run = poller.RunAsync(cancellation.Token);
+        RecordingTimer cadence = await time.WaitForTimerAsync(
+            TimeSpan.FromMinutes(expectedMinutes),
+            TimeSpan.FromMinutes(expectedMinutes));
+
+        Assert.False(provider.Started.Task.IsCompleted);
+        poller.RequestRefresh();
+        await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, provider.InvocationCount);
+
+        provider.CompleteOk();
+        cancellation.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, provider.InvocationCount);
+        Assert.True(cadence.IsDisposed);
+    }
+
     [Fact]
     public async Task RunAsync_RecreatesTimerWhenSettingsChangeAfterTick()
     {

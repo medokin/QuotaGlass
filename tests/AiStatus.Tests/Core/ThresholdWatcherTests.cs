@@ -141,6 +141,50 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
+    public void Evaluate_DisabledProviderRetainsFiredCycleKeyUntilSameCycleReturns()
+    {
+        // Break caught: disabling and re-enabling a provider repeats an alert in the same quota cycle.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset cycle = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
+        StatusReport warning = Report(80, cycle);
+        StatusReport disabled = Report("claude", "Claude", HealthState.Disabled, []);
+
+        Assert.Equal(AlertKind.Warning, Assert.Single(watcher.Evaluate(Report(79, cycle), warning)).Kind);
+        Assert.Empty(watcher.Evaluate(warning, disabled));
+        Assert.Empty(watcher.Evaluate(disabled, warning));
+    }
+
+    [Fact]
+    public void Evaluate_TemporarilyMissingWindowRetainsFiredCycleKey()
+    {
+        // Break caught: a transient missing quota window re-arms an alert before its reset cycle changes.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset cycle = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
+        StatusReport warning = Report(80, cycle);
+        StatusReport withoutWindow = Report("claude", "Claude", HealthState.Ok, []);
+
+        Assert.Equal(AlertKind.Warning, Assert.Single(watcher.Evaluate(Report(79, cycle), warning)).Kind);
+        Assert.Empty(watcher.Evaluate(warning, withoutWindow));
+        Assert.Empty(watcher.Evaluate(withoutWindow, warning));
+    }
+
+    [Fact]
+    public void Evaluate_KnownNewCycleRetiresFiredKeyAfterDisabledSnapshot()
+    {
+        // Break caught: preserving keys across disabled snapshots prevents a known replacement cycle from alerting.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset first = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
+        DateTimeOffset second = first.AddDays(7);
+        StatusReport disabled = Report("claude", "Claude", HealthState.Disabled, []);
+
+        Assert.Equal(AlertKind.Warning,
+            Assert.Single(watcher.Evaluate(Report(79, first), Report(80, first))).Kind);
+        Assert.Empty(watcher.Evaluate(Report(80, first), disabled));
+        Assert.Equal(AlertKind.Warning,
+            Assert.Single(watcher.Evaluate(disabled, Report(80, second))).Kind);
+    }
+
+    [Fact]
     public void Evaluate_MatchesPreviousWindowByExactLabel()
     {
         // Break caught: a prior percentage from a differently named window is used to infer a crossing.

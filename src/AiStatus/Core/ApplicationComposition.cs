@@ -243,9 +243,9 @@ internal sealed class ApplicationShutdownCoordinator
             catch (OperationCanceledException) when (_applicationCancellation.IsCancellationRequested)
             {
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                TryLogFailure(exception);
+                // PollLoopFaultObserver owns fault logging. This coordinator only waits for termination.
             }
         }
 
@@ -279,6 +279,58 @@ internal sealed class ApplicationShutdownCoordinator
         if (Interlocked.Exchange(ref _ownedResourcesDisposed, 1) == 0)
         {
             _disposeOwnedResources();
+        }
+    }
+
+    private void TryLogFailure(Exception exception)
+    {
+        try
+        {
+            _log.Write(LogArea.Application, LogOutcome.Failed, exception: exception);
+        }
+        catch (Exception)
+        {
+        }
+    }
+}
+
+internal sealed class PollLoopFaultObserver
+{
+    private readonly Func<Task> _requestShutdown;
+    private readonly RollingFileLog _log;
+
+    public PollLoopFaultObserver(Func<Task> requestShutdown, RollingFileLog log)
+    {
+        _requestShutdown = requestShutdown ?? throw new ArgumentNullException(nameof(requestShutdown));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+    }
+
+    public Task ObserveAsync(Task pollLoop, CancellationToken applicationCancellation)
+    {
+        ArgumentNullException.ThrowIfNull(pollLoop);
+        return ObserveCoreAsync(pollLoop, applicationCancellation);
+    }
+
+    private async Task ObserveCoreAsync(Task pollLoop, CancellationToken applicationCancellation)
+    {
+        try
+        {
+            await pollLoop.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (applicationCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+            try
+            {
+                await _requestShutdown().ConfigureAwait(false);
+            }
+            catch (Exception shutdownException)
+            {
+                TryLogFailure(shutdownException);
+            }
         }
     }
 

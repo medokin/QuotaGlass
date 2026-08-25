@@ -25,7 +25,9 @@ public partial class App : System.Windows.Application
     private TrayIconHost? _tray;
     private ApplicationSettingsCoordinator? _settingsCoordinator;
     private ApplicationShutdownCoordinator? _shutdownCoordinator;
+    private PollLoopFaultObserver? _pollLoopFaultObserver;
     private Task? _pollLoop;
+    private Task? _pollLoopObservation;
     private Task? _startupTask;
     private int _ownedResourcesDisposed;
 
@@ -83,6 +85,9 @@ public partial class App : System.Windows.Application
                 DisposeOwnedResources,
                 Shutdown,
                 _log);
+            _pollLoopFaultObserver = new PollLoopFaultObserver(
+                _shutdownCoordinator.ShutdownAsync,
+                _log);
 
             string executablePath = Environment.ProcessPath
                 ?? Process.GetCurrentProcess().MainModule?.FileName
@@ -115,10 +120,13 @@ public partial class App : System.Windows.Application
 
             ApplyOverlaySettings(settings);
             _settingsStore.Changed += OnSettingsChanged;
+            _poller.SetInitialReducedCadence(_activity.IsReducedCadence);
             _activity.Changed += OnActivityChanged;
-            _poller.SetReducedCadence(_activity.IsReducedCadence);
 
             _pollLoop = _poller.RunAsync(_applicationCancellation.Token);
+            _pollLoopObservation = _pollLoopFaultObserver.ObserveAsync(
+                _pollLoop,
+                _applicationCancellation.Token);
             _poller.RequestRefresh();
         }
         catch (OperationCanceledException) when (_applicationCancellation.IsCancellationRequested)

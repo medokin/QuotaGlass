@@ -193,6 +193,73 @@ public sealed class ApplicationCompositionTests : IDisposable
     }
 
     [Fact]
+    public async Task PollLoopFault_IsObservedAndTriggersExactlyOneOrderlyShutdown()
+    {
+        // Break caught: a later poll-loop fault remains unobserved while the tray silently goes stale.
+        using var cancellation = new CancellationTokenSource();
+        var pollCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatcher = new QueuedDispatcher();
+        int disposals = 0;
+        int shutdowns = 0;
+        string logPath = Path.Combine(_directory.Path, $"poll-fault-{Guid.NewGuid():N}.log");
+        var log = new RollingFileLog(logPath);
+        var coordinator = new ApplicationShutdownCoordinator(
+            cancellation,
+            () => pollCompletion.Task,
+            dispatcher,
+            () => disposals++,
+            () => shutdowns++,
+            log);
+        var observer = new PollLoopFaultObserver(coordinator.ShutdownAsync, log);
+
+        Task observation = observer.ObserveAsync(pollCompletion.Task, cancellation.Token);
+        pollCompletion.SetException(new InvalidOperationException("token=secret account=user@example.test"));
+
+        await dispatcher.WaitForPendingAsync();
+        dispatcher.RunNext();
+        await observation;
+
+        Assert.True(pollCompletion.Task.IsFaulted);
+        Assert.True(observation.IsCompletedSuccessfully);
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(1, disposals);
+        Assert.Equal(1, shutdowns);
+        string[] failureLines = File.ReadAllLines(logPath)
+            .Where(line => line.Contains("application failed", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(failureLines);
+        Assert.Contains("exception=InvalidOperationException", failureLines[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", failureLines[0], StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("example.test", failureLines[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PollLoopCancellation_DoesNotLogOrRequestRecursiveShutdown()
+    {
+        // Break caught: normal application cancellation is treated as a poll failure and starts shutdown twice.
+        using var cancellation = new CancellationTokenSource();
+        var pollCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int shutdowns = 0;
+        string logPath = Path.Combine(_directory.Path, $"poll-cancel-{Guid.NewGuid():N}.log");
+        var observer = new PollLoopFaultObserver(
+            () =>
+            {
+                shutdowns++;
+                return Task.CompletedTask;
+            },
+            new RollingFileLog(logPath));
+
+        Task observation = observer.ObserveAsync(pollCompletion.Task, cancellation.Token);
+        cancellation.Cancel();
+        pollCompletion.SetCanceled(cancellation.Token);
+        await observation;
+
+        Assert.True(observation.IsCompletedSuccessfully);
+        Assert.Equal(0, shutdowns);
+        Assert.False(File.Exists(logPath));
+    }
+
+    [Fact]
     public void ShutdownFallback_IsSynchronousIdempotentAndDoesNotRequestShutdownAgain()
     {
         using var cancellation = new CancellationTokenSource();

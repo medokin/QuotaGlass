@@ -163,6 +163,16 @@ public sealed class StatusPoller
         }
     }
 
+    internal void SetInitialReducedCadence(bool reduced)
+    {
+        if (Volatile.Read(ref _runActive) != 0)
+        {
+            throw new InvalidOperationException("Initial cadence can only be set before the poller starts.");
+        }
+
+        Volatile.Write(ref _reducedCadence, reduced ? 1 : 0);
+    }
+
     private static bool IsEnabled(AppSettings settings, string providerId) =>
         !settings.Providers.TryGetValue(providerId, out ProviderSettings? providerSettings)
         || providerSettings.Enabled;
