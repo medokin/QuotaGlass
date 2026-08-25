@@ -57,6 +57,53 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.False(File.Exists(_path + ".tmp"));
     }
 
+    [Fact]
+    public async Task UpdateAsync_AppliesNarrowChangeToLatestSettings()
+    {
+        // Break caught: overlay persistence replaces newer unrelated settings with a cached full document.
+        AppSettings latest = AppSettings.Default with
+        {
+            Hotkey = "Ctrl+Shift+Q",
+            OverlayVisible = true,
+            WarningPercent = 72,
+        };
+        await _store.SaveAsync(latest, CancellationToken.None);
+
+        await _store.UpdateAsync(
+            settings => settings with
+            {
+                OverlayCorner = OverlayCorner.Custom,
+                OverlayMonitorId = "SECONDARY",
+                OverlayPosition = new OverlayPosition(2100, 90),
+            },
+            CancellationToken.None);
+
+        AppSettings saved = await _store.LoadAsync(CancellationToken.None);
+        Assert.Equal("Ctrl+Shift+Q", saved.Hotkey);
+        Assert.True(saved.OverlayVisible);
+        Assert.Equal(72, saved.WarningPercent);
+        Assert.Equal(OverlayCorner.Custom, saved.OverlayCorner);
+        Assert.Equal("SECONDARY", saved.OverlayMonitorId);
+        Assert.Equal(new OverlayPosition(2100, 90), saved.OverlayPosition);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SerializesConcurrentReadModifyWriteOperations()
+    {
+        // Break caught: concurrent narrow updates read the same state and lose completed updates.
+        await _store.LoadAsync(CancellationToken.None);
+
+        Task<AppSettings>[] updates = Enumerable.Range(0, 20)
+            .Select(_ => _store.UpdateAsync(
+                settings => settings with { Hotkey = settings.Hotkey + "x" },
+                CancellationToken.None))
+            .ToArray();
+        await Task.WhenAll(updates);
+
+        AppSettings saved = await _store.LoadAsync(CancellationToken.None);
+        Assert.Equal(AppSettings.Default.Hotkey + new string('x', 20), saved.Hotkey);
+    }
+
     [Theory]
     [MemberData(nameof(InvalidSettings))]
     public async Task LoadAsync_InvalidCompleteDocumentReturnsDefaults(AppSettings invalidSettings)

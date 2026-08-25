@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
+using System.ComponentModel;
 using AiStatus.Core;
 using Point = System.Windows.Point;
 using Rect = System.Windows.Rect;
 using Size = System.Windows.Size;
+using Window = System.Windows.Window;
 
 namespace AiStatus.Ui;
 
@@ -21,9 +23,14 @@ public sealed record MonitorWorkArea(
     bool IsPrimary,
     double DpiScale);
 
+public sealed record CustomOverlayPosition(Point Position, string MonitorId);
+
 public sealed class WindowPlacementService
 {
     private const uint MonitorDefaultToNearest = 2;
+    private const uint NoSize = 0x0001;
+    private const uint NoZOrder = 0x0004;
+    private const uint NoActivate = 0x0010;
 
     public IReadOnlyList<MonitorWorkArea> GetMonitorWorkAreas()
     {
@@ -67,8 +74,37 @@ public sealed class WindowPlacementService
             return null;
         }
 
-        Rect area = ToDipRect(physicalArea, monitor.DpiScale);
+        Rect area = ToPhysicalRect(physicalArea);
         return (monitor, area, DetectTaskbarEdge(monitor, area));
+    }
+
+    public void PositionWindow(Window window, Point physicalPosition)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        if (!NativeMethods.SetWindowPos(
+                handle,
+                IntPtr.Zero,
+                checked((int)Math.Round(physicalPosition.X)),
+                checked((int)Math.Round(physicalPosition.Y)),
+                0,
+                0,
+                NoSize | NoZOrder | NoActivate))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
+    public Rect GetWindowBounds(Window window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        if (!NativeMethods.GetWindowRect(handle, out NativeRect bounds))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        return ToPhysicalRect(bounds);
     }
 
     public static Point ClampToWorkArea(Point desired, Size windowSize, Rect workingArea)
@@ -83,22 +119,24 @@ public sealed class WindowPlacementService
     public static Point GetOverlayPosition(
         AppSettings settings,
         IReadOnlyList<MonitorWorkArea> monitors,
-        Size windowSize,
+        Size windowSizeInDips,
         double margin = 12)
     {
         ArgumentNullException.ThrowIfNull(settings);
         MonitorWorkArea monitor = ResolveConfiguredMonitor(settings.OverlayMonitorId, monitors);
         Rect work = monitor.WorkingArea;
+        Size windowSize = ToPhysicalPixels(windowSizeInDips, monitor);
+        double physicalMargin = Math.Ceiling(margin * monitor.DpiScale);
 
         Point desired = settings.OverlayCorner switch
         {
-            OverlayCorner.TopLeft => new(work.Left + margin, work.Top + margin),
-            OverlayCorner.TopRight => new(work.Right - windowSize.Width - margin, work.Top + margin),
-            OverlayCorner.BottomLeft => new(work.Left + margin, work.Bottom - windowSize.Height - margin),
-            OverlayCorner.BottomRight => new(work.Right - windowSize.Width - margin, work.Bottom - windowSize.Height - margin),
+            OverlayCorner.TopLeft => new(work.Left + physicalMargin, work.Top + physicalMargin),
+            OverlayCorner.TopRight => new(work.Right - windowSize.Width - physicalMargin, work.Top + physicalMargin),
+            OverlayCorner.BottomLeft => new(work.Left + physicalMargin, work.Bottom - windowSize.Height - physicalMargin),
+            OverlayCorner.BottomRight => new(work.Right - windowSize.Width - physicalMargin, work.Bottom - windowSize.Height - physicalMargin),
             OverlayCorner.Custom when settings.OverlayPosition is not null =>
                 new(settings.OverlayPosition.X, settings.OverlayPosition.Y),
-            _ => new(work.Right - windowSize.Width - margin, work.Bottom - windowSize.Height - margin),
+            _ => new(work.Right - windowSize.Width - physicalMargin, work.Bottom - windowSize.Height - physicalMargin),
         };
 
         return ClampToWorkArea(desired, windowSize, work);
@@ -107,10 +145,11 @@ public sealed class WindowPlacementService
     public static Point GetPopupPosition(
         MonitorWorkArea monitor,
         Rect notificationArea,
-        Size windowSize,
+        Size windowSizeInDips,
         TaskbarEdge edge)
     {
         Rect work = monitor.WorkingArea;
+        Size windowSize = ToPhysicalPixels(windowSizeInDips, monitor);
         Point desired = edge switch
         {
             TaskbarEdge.Top => new(notificationArea.Right - windowSize.Width, work.Top),
@@ -122,27 +161,33 @@ public sealed class WindowPlacementService
         return ClampToWorkArea(desired, windowSize, work);
     }
 
-    public static async Task SaveCustomPositionAsync(
-        SettingsStore store,
-        AppSettings settings,
-        Point position,
-        Size windowSize,
-        IReadOnlyList<MonitorWorkArea> monitors,
-        CancellationToken cancellationToken)
+    public static CustomOverlayPosition ClampCustomPosition(
+        Point desiredPhysicalPosition,
+        Size windowSizeInDips,
+        MonitorWorkArea monitor)
     {
-        ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(settings);
-        MonitorWorkArea monitor = FindNearestMonitor(
-            new Point(position.X + (windowSize.Width / 2), position.Y + (windowSize.Height / 2)),
-            monitors);
-        Point clamped = ClampToWorkArea(position, windowSize, monitor.WorkingArea);
-        AppSettings updated = settings with
+        Size physicalWindowSize = ToPhysicalPixels(windowSizeInDips, monitor);
+        Point clamped = ClampToWorkArea(desiredPhysicalPosition, physicalWindowSize, monitor.WorkingArea);
+        return new CustomOverlayPosition(clamped, monitor.DeviceId);
+    }
+
+    public static Size ToPhysicalPixels(Size sizeInDips, MonitorWorkArea monitor) => new(
+        Math.Ceiling(sizeInDips.Width * monitor.DpiScale),
+        Math.Ceiling(sizeInDips.Height * monitor.DpiScale));
+
+    public static MonitorWorkArea FromPhysicalPixels(
+        string deviceId,
+        Rect bounds,
+        Rect workingArea,
+        bool isPrimary,
+        double dpiScale)
+    {
+        if (!double.IsFinite(dpiScale) || dpiScale <= 0)
         {
-            OverlayCorner = OverlayCorner.Custom,
-            OverlayMonitorId = monitor.DeviceId,
-            OverlayPosition = new OverlayPosition(clamped.X, clamped.Y),
-        };
-        await store.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
+            throw new ArgumentOutOfRangeException(nameof(dpiScale));
+        }
+
+        return new MonitorWorkArea(deviceId, bounds, workingArea, isPrimary, dpiScale);
     }
 
     public static MonitorWorkArea ResolveConfiguredMonitor(
@@ -215,10 +260,10 @@ public sealed class WindowPlacementService
         }
 
         double dpiScale = GetDpiScale(monitorHandle);
-        return new MonitorWorkArea(
+        return FromPhysicalPixels(
             info.DeviceName,
-            ToDipRect(info.Monitor, dpiScale),
-            ToDipRect(info.WorkArea, dpiScale),
+            ToPhysicalRect(info.Monitor),
+            ToPhysicalRect(info.WorkArea),
             (info.Flags & 1) != 0,
             dpiScale);
     }
@@ -241,11 +286,11 @@ public sealed class WindowPlacementService
         }
     }
 
-    private static Rect ToDipRect(NativeRect rect, double dpiScale) => new(
-        rect.Left / dpiScale,
-        rect.Top / dpiScale,
-        (rect.Right - rect.Left) / dpiScale,
-        (rect.Bottom - rect.Top) / dpiScale);
+    private static Rect ToPhysicalRect(NativeRect rect) => new(
+        rect.Left,
+        rect.Top,
+        rect.Right - rect.Left,
+        rect.Bottom - rect.Top);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint(int x, int y)
@@ -296,6 +341,17 @@ public sealed class WindowPlacementService
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetWindowPos(
+            IntPtr window,
+            IntPtr insertAfter,
+            int x,
+            int y,
+            int width,
+            int height,
+            uint flags);
 
         [DllImport("user32.dll")]
         internal static extern IntPtr MonitorFromPoint(NativePoint point, uint flags);

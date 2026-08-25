@@ -73,8 +73,7 @@ public partial class PopupWindow : Window
                 notification.Value.Area,
                 size,
                 notification.Value.Edge);
-            Left = position.X;
-            Top = position.Y;
+            _placementService.PositionWindow(this, position);
             return;
         }
 
@@ -87,7 +86,6 @@ public partial class PopupWindow : Window
         MonitorWorkArea primary = WindowPlacementService.ResolveConfiguredMonitor(null, monitors);
         Rect fallbackAnchor = new(primary.WorkingArea.Right, primary.WorkingArea.Bottom, 0, 0);
         Point fallback = WindowPlacementService.GetPopupPosition(primary, fallbackAnchor, size, TaskbarEdge.Bottom);
-        Left = fallback.X;
-        Top = fallback.Y;
+        _placementService.PositionWindow(this, fallback);
     }
 }

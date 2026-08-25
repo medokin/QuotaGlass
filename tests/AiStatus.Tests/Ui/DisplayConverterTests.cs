@@ -126,7 +126,65 @@ public sealed class DisplayConverterTests
 
         Point result = WindowPlacementService.GetOverlayPosition(settings, monitors, new Size(300, 200));
 
-        Assert.Equal(new Point(2888, 772), result);
+        Assert.Equal(new Point(2732, 666), result);
+    }
+
+    [Fact]
+    public void PhysicalMonitorAreas_RemainContiguousAcrossMixedDpiBoundary()
+    {
+        // Break caught: independently scaling absolute monitor origins makes mixed-DPI monitor rectangles overlap.
+        MonitorWorkArea primary = WindowPlacementService.FromPhysicalPixels(
+            "PRIMARY",
+            new Rect(0, 0, 1920, 1080),
+            new Rect(0, 0, 1920, 1040),
+            true,
+            1);
+        MonitorWorkArea secondary = WindowPlacementService.FromPhysicalPixels(
+            "SECONDARY",
+            new Rect(1920, 0, 2560, 1440),
+            new Rect(1920, 0, 2560, 1400),
+            false,
+            1.5);
+
+        Assert.Equal(1920, primary.Bounds.Right);
+        Assert.Equal(1920, secondary.Bounds.Left);
+    }
+
+    [Fact]
+    public void OverlayPosition_ConvertsWindowAndMarginUsingTargetMonitorDpi()
+    {
+        // Break caught: a secondary-monitor overlay uses primary-DPI size or a fixed physical 12-pixel margin.
+        MonitorWorkArea[] monitors =
+        [
+            new("PRIMARY", new Rect(0, 0, 1920, 1080), new Rect(0, 0, 1920, 1040), true, 1),
+            new("SECONDARY", new Rect(1920, 0, 2560, 1440), new Rect(1920, 0, 2560, 1400), false, 1.5),
+        ];
+        AppSettings settings = AppSettings.Default with
+        {
+            OverlayMonitorId = "SECONDARY",
+            OverlayCorner = OverlayCorner.BottomRight,
+        };
+
+        Size physicalSize = WindowPlacementService.ToPhysicalPixels(new Size(300, 200), monitors[1]);
+        Point result = WindowPlacementService.GetOverlayPosition(settings, monitors, new Size(300, 200));
+
+        Assert.Equal(new Size(450, 300), physicalSize);
+        Assert.Equal(new Point(4012, 1082), result);
+    }
+
+    [Fact]
+    public void NearestMonitor_UsesPhysicalDragCoordinatesAcrossMixedDpiBoundary()
+    {
+        // Break caught: a drag just onto the scaled secondary monitor is classified against overlapping logical rectangles.
+        MonitorWorkArea[] monitors =
+        [
+            new("PRIMARY", new Rect(0, 0, 1920, 1080), new Rect(0, 0, 1920, 1040), true, 1),
+            new("SECONDARY", new Rect(1920, 0, 2560, 1440), new Rect(1920, 0, 2560, 1400), false, 1.5),
+        ];
+
+        MonitorWorkArea result = WindowPlacementService.FindNearestMonitor(new Point(1921, 500), monitors);
+
+        Assert.Equal("SECONDARY", result.DeviceId);
     }
 
     [Theory]
@@ -169,6 +227,27 @@ public sealed class DisplayConverterTests
         Assert.Equal(new Point(1620, 0), result);
     }
 
+    [Fact]
+    public void OverlayPosition_ReclampsPersistedPhysicalCustomPositionAtTargetDpi()
+    {
+        // Break caught: a stored custom point is trusted on show or clamped with an unscaled WPF window size.
+        MonitorWorkArea[] monitors =
+        [
+            new("PRIMARY", new Rect(0, 0, 1920, 1080), new Rect(0, 0, 1920, 1040), true, 1),
+            new("SECONDARY", new Rect(1920, 0, 2560, 1440), new Rect(1920, 0, 2560, 1400), false, 1.5),
+        ];
+        AppSettings settings = AppSettings.Default with
+        {
+            OverlayMonitorId = "SECONDARY",
+            OverlayCorner = OverlayCorner.Custom,
+            OverlayPosition = new OverlayPosition(5000, -50),
+        };
+
+        Point result = WindowPlacementService.GetOverlayPosition(settings, monitors, new Size(300, 200));
+
+        Assert.Equal(new Point(4030, 0), result);
+    }
+
     [Theory]
     [InlineData(TaskbarEdge.Bottom, 660, 550)]
     [InlineData(TaskbarEdge.Top, 660, 50)]
@@ -193,29 +272,24 @@ public sealed class DisplayConverterTests
     }
 
     [Fact]
-    public async Task SaveCustomPositionAsync_PersistsCoordinatesAndContainingMonitor()
+    public void PopupPosition_UsesPhysicalNotificationAreaAndTargetDpiSize()
     {
-        // Break caught: drag placement is visually applied but lost, or saved against the wrong monitor.
-        using var directory = new TemporaryDirectory();
-        using var store = new SettingsStore(Path.Combine(directory.Path, "settings.json"));
-        MonitorWorkArea[] monitors =
-        [
-            new("PRIMARY", new Rect(0, 0, 1000, 800), new Rect(0, 0, 1000, 760), true, 1),
-            new("SECONDARY", new Rect(1000, 0, 1000, 800), new Rect(1000, 0, 1000, 760), false, 1),
-        ];
+        // Break caught: mixed-DPI popup placement subtracts a logical size from a physical notification anchor.
+        var monitor = new MonitorWorkArea(
+            "SECONDARY",
+            new Rect(1920, 0, 2560, 1440),
+            new Rect(1920, 0, 2560, 1400),
+            false,
+            1.5);
+        Rect notificationArea = new(4280, 1400, 200, 40);
 
-        await WindowPlacementService.SaveCustomPositionAsync(
-            store,
-            AppSettings.Default,
-            new Point(1200, 80),
-            new Size(300, 200),
-            monitors,
-            CancellationToken.None);
+        Point result = WindowPlacementService.GetPopupPosition(
+            monitor,
+            notificationArea,
+            new Size(240, 200),
+            TaskbarEdge.Bottom);
 
-        AppSettings saved = await store.LoadAsync(CancellationToken.None);
-        Assert.Equal(OverlayCorner.Custom, saved.OverlayCorner);
-        Assert.Equal("SECONDARY", saved.OverlayMonitorId);
-        Assert.Equal(new OverlayPosition(1200, 80), saved.OverlayPosition);
+        Assert.Equal(new Point(4120, 1100), result);
     }
 
     private static ProviderSnapshot Snapshot(DateTimeOffset fetchedAt, int consecutiveFailures) => new(

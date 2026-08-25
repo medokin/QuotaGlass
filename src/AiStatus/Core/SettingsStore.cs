@@ -12,6 +12,7 @@ public sealed class SettingsStore : IDisposable
     };
 
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _persistenceGate = new(1, 1);
     private readonly string _path;
     private readonly FileSystemWatcher _watcher;
     private System.Threading.Timer? _reloadTimer;
@@ -41,16 +42,25 @@ public sealed class SettingsStore : IDisposable
 
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken)
     {
-        (bool isValid, AppSettings settings) = await ReadAsync(cancellationToken).ConfigureAwait(false);
-        AppSettings loaded = isValid ? settings : AppSettings.Default;
-
-        lock (_gate)
+        await _persistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            ThrowIfDisposed();
-            _current = loaded;
-        }
+            ThrowIfDisposedLocked();
+            (bool isValid, AppSettings settings) = await ReadAsync(cancellationToken).ConfigureAwait(false);
+            AppSettings loaded = isValid ? settings : AppSettings.Default;
 
-        return loaded;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                _current = loaded;
+            }
+
+            return loaded;
+        }
+        finally
+        {
+            _persistenceGate.Release();
+        }
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -61,11 +71,51 @@ public sealed class SettingsStore : IDisposable
             throw new ArgumentException("Settings must be complete and valid.", nameof(settings));
         }
 
-        lock (_gate)
+        await _persistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            ThrowIfDisposed();
+            ThrowIfDisposedLocked();
+            await WriteAsync(settings, cancellationToken).ConfigureAwait(false);
         }
+        finally
+        {
+            _persistenceGate.Release();
+        }
+    }
 
+    public async Task<AppSettings> UpdateAsync(
+        Func<AppSettings, AppSettings> update,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        await _persistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AppSettings current;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                current = _current;
+            }
+
+            AppSettings updated = update(current)
+                ?? throw new ArgumentException("The settings updater returned null.", nameof(update));
+            if (!IsValid(updated))
+            {
+                throw new ArgumentException("The settings updater produced invalid settings.", nameof(update));
+            }
+
+            await WriteAsync(updated, cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        finally
+        {
+            _persistenceGate.Release();
+        }
+    }
+
+    private async Task WriteAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
         string temporaryPath = _path + ".tmp";
         try
         {
@@ -146,25 +196,43 @@ public sealed class SettingsStore : IDisposable
 
     private async Task ReloadFromWatcherAsync()
     {
-        (bool isValid, AppSettings settings) = await ReadAsync(CancellationToken.None).ConfigureAwait(false);
-        if (!isValid)
+        await _persistenceGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        EventHandler<AppSettings>? changed = null;
+        AppSettings? changedSettings = null;
+        try
         {
-            return;
-        }
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+            }
 
-        EventHandler<AppSettings>? changed;
-        lock (_gate)
-        {
-            if (_disposed)
+            (bool isValid, AppSettings settings) = await ReadAsync(CancellationToken.None).ConfigureAwait(false);
+            if (!isValid)
             {
                 return;
             }
 
-            _current = settings;
-            changed = Changed;
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _current = settings;
+                changed = Changed;
+                changedSettings = settings;
+            }
+        }
+        finally
+        {
+            _persistenceGate.Release();
         }
 
-        changed?.Invoke(this, settings);
+        changed?.Invoke(this, changedSettings!);
     }
 
     private async Task<(bool IsValid, AppSettings Settings)> ReadAsync(CancellationToken cancellationToken)
@@ -218,5 +286,13 @@ public sealed class SettingsStore : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    private void ThrowIfDisposedLocked()
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+        }
     }
 }

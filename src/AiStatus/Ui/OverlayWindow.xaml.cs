@@ -20,9 +20,9 @@ public partial class OverlayWindow : Window
 
     private readonly SettingsStore? _settingsStore;
     private readonly WindowPlacementService _placementService;
-    private AppSettings _settings = AppSettings.Default;
+    private readonly OverlayPositionPersistence? _positionPersistence;
+    private readonly OverlayDragState _dragState = new();
     private Point _dragOffset;
-    private bool _dragging;
 
     public OverlayWindow()
         : this(null, new WindowPlacementService())
@@ -38,6 +38,12 @@ public partial class OverlayWindow : Window
     {
         _settingsStore = settingsStore;
         _placementService = placementService ?? throw new ArgumentNullException(nameof(placementService));
+        if (settingsStore is not null)
+        {
+            _positionPersistence = new OverlayPositionPersistence(settingsStore);
+            _positionPersistence.Failed += OnPositionPersistenceFailed;
+        }
+
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         IsVisibleChanged += OnIsVisibleChanged;
@@ -46,6 +52,12 @@ public partial class OverlayWindow : Window
     public ObservableCollection<ProviderSnapshot> Providers { get; } = [];
 
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
+
+    internal bool IsDragging => _dragState.IsDragging;
+
+    public Exception? LastPositionPersistenceFailure { get; private set; }
+
+    public event Action<object?, Exception>? PositionPersistenceFailed;
 
     public void SetProviders(IEnumerable<ProviderSnapshot> providers, TimeSpan activePollInterval)
     {
@@ -67,6 +79,11 @@ public partial class OverlayWindow : Window
     {
         SourceInitialized -= OnSourceInitialized;
         IsVisibleChanged -= OnIsVisibleChanged;
+        if (_positionPersistence is not null)
+        {
+            _positionPersistence.Failed -= OnPositionPersistenceFailed;
+        }
+
         base.OnClosed(args);
     }
 
@@ -87,22 +104,26 @@ public partial class OverlayWindow : Window
         try
         {
             await Dispatcher.InvokeAsync(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
-            if (_settingsStore is not null)
-            {
-                _settings = await _settingsStore.LoadAsync(CancellationToken.None);
-            }
-
-            ApplyConfiguredPlacement();
+            AppSettings settings = _settingsStore is null
+                ? AppSettings.Default
+                : await _settingsStore.LoadAsync(CancellationToken.None);
+            ApplyConfiguredPlacement(settings);
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            OnPositionPersistenceFailed(this, exception);
         }
-        catch (IOException)
+        catch (IOException exception)
         {
+            OnPositionPersistenceFailed(this, exception);
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            OnPositionPersistenceFailed(this, exception);
         }
     }
 
-    private void ApplyConfiguredPlacement()
+    private void ApplyConfiguredPlacement(AppSettings settings)
     {
         IReadOnlyList<MonitorWorkArea> monitors = _placementService.GetMonitorWorkAreas();
         if (monitors.Count == 0)
@@ -111,9 +132,10 @@ public partial class OverlayWindow : Window
         }
 
         Size size = new(Math.Max(ActualWidth, MinWidth), Math.Max(ActualHeight, 1));
-        Point position = WindowPlacementService.GetOverlayPosition(_settings, monitors, size);
-        Left = position.X;
-        Top = position.Y;
+        MonitorWorkArea monitor = WindowPlacementService.ResolveConfiguredMonitor(settings.OverlayMonitorId, monitors);
+        Point position = WindowPlacementService.GetOverlayPosition(settings, monitors, size);
+        CustomOverlayPosition clamped = WindowPlacementService.ClampCustomPosition(position, size, monitor);
+        _placementService.PositionWindow(this, clamped.Position);
     }
 
     private void OnDragStarted(object sender, MouseButtonEventArgs args)
@@ -123,74 +145,140 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        _dragOffset = args.GetPosition(this);
-        _dragging = CaptureMouse();
-        args.Handled = _dragging;
+        try
+        {
+            Point cursor = PointToScreen(args.GetPosition(this));
+            Rect bounds = _placementService.GetWindowBounds(this);
+            _dragOffset = new Point(cursor.X - bounds.Left, cursor.Y - bounds.Top);
+            _dragState.Begin(CaptureMouse());
+            args.Handled = _dragState.IsDragging;
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            _dragState.Cancel();
+            OnPositionPersistenceFailed(this, exception);
+        }
     }
 
     private void OnDragMoved(object sender, MouseEventArgs args)
     {
-        if (!_dragging || args.LeftButton != MouseButtonState.Pressed)
+        if (!_dragState.IsDragging)
         {
             return;
         }
 
-        Point cursor = args.GetPosition(this);
-        Left += cursor.X - _dragOffset.X;
-        Top += cursor.Y - _dragOffset.Y;
-        args.Handled = true;
+        if (args.LeftButton != MouseButtonState.Pressed)
+        {
+            CancelDrag();
+            return;
+        }
+
+        try
+        {
+            Point cursor = PointToScreen(args.GetPosition(this));
+            Point desired = new(cursor.X - _dragOffset.X, cursor.Y - _dragOffset.Y);
+            IReadOnlyList<MonitorWorkArea> monitors = _placementService.GetMonitorWorkAreas();
+            if (monitors.Count == 0)
+            {
+                CancelDrag();
+                return;
+            }
+
+            MonitorWorkArea monitor = WindowPlacementService.FindNearestMonitor(cursor, monitors);
+            CustomOverlayPosition clamped = WindowPlacementService.ClampCustomPosition(desired, GetDesiredSize(), monitor);
+            _placementService.PositionWindow(this, clamped.Position);
+            args.Handled = true;
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            CancelDrag();
+            OnPositionPersistenceFailed(this, exception);
+        }
     }
 
-    private async void OnDragEnded(object sender, MouseButtonEventArgs args)
+    private void OnDragEnded(object sender, MouseButtonEventArgs args)
     {
-        if (!_dragging || args.ChangedButton != MouseButton.Left)
+        if (args.ChangedButton != MouseButton.Left || !_dragState.End())
         {
             return;
         }
 
-        _dragging = false;
         ReleaseMouseCapture();
         args.Handled = true;
 
-        if (_settingsStore is null)
+        if (_positionPersistence is null)
         {
             return;
         }
 
         try
         {
-            IReadOnlyList<MonitorWorkArea> monitors = _placementService.GetMonitorWorkAreas();
-            if (monitors.Count == 0)
+            CustomOverlayPosition? clamped = ClampCurrentPosition();
+            if (clamped is null)
             {
                 return;
             }
 
-            Size size = new(Math.Max(ActualWidth, MinWidth), Math.Max(ActualHeight, 1));
-            await WindowPlacementService.SaveCustomPositionAsync(
-                _settingsStore,
-                _settings,
-                new Point(Left, Top),
-                size,
-                monitors,
-                CancellationToken.None);
-            MonitorWorkArea monitor = WindowPlacementService.FindNearestMonitor(
-                new Point(Left + (size.Width / 2), Top + (size.Height / 2)),
-                monitors);
-            Point clamped = WindowPlacementService.ClampToWorkArea(new Point(Left, Top), size, monitor.WorkingArea);
-            Left = clamped.X;
-            Top = clamped.Y;
-            _settings = _settings with
+            _ = _positionPersistence.QueueAsync(clamped);
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            OnPositionPersistenceFailed(this, exception);
+        }
+    }
+
+    private void OnLostMouseCapture(object sender, MouseEventArgs args)
+    {
+        _dragState.Cancel();
+    }
+
+    private void CancelDrag()
+    {
+        if (!_dragState.IsDragging)
+        {
+            return;
+        }
+
+        _dragState.Cancel();
+        ReleaseMouseCapture();
+    }
+
+    private CustomOverlayPosition? ClampCurrentPosition()
+    {
+        IReadOnlyList<MonitorWorkArea> monitors = _placementService.GetMonitorWorkAreas();
+        if (monitors.Count == 0)
+        {
+            return null;
+        }
+
+        Rect bounds = _placementService.GetWindowBounds(this);
+        Point center = new(bounds.Left + (bounds.Width / 2), bounds.Top + (bounds.Height / 2));
+        MonitorWorkArea monitor = WindowPlacementService.FindNearestMonitor(center, monitors);
+        CustomOverlayPosition clamped = WindowPlacementService.ClampCustomPosition(bounds.TopLeft, GetDesiredSize(), monitor);
+        _placementService.PositionWindow(this, clamped.Position);
+        return clamped;
+    }
+
+    private Size GetDesiredSize() => new(Math.Max(ActualWidth, MinWidth), Math.Max(ActualHeight, 1));
+
+    private void OnPositionPersistenceFailed(object? sender, Exception exception)
+    {
+        LastPositionPersistenceFailure = exception;
+        Action<object?, Exception>? handlers = PositionPersistenceFailed;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<object?, Exception> handler in handlers.GetInvocationList().Cast<Action<object?, Exception>>())
+        {
+            try
             {
-                OverlayCorner = OverlayCorner.Custom,
-                OverlayMonitorId = monitor.DeviceId,
-                OverlayPosition = new OverlayPosition(clamped.X, clamped.Y),
-            };
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        catch (IOException)
-        {
+                handler(this, exception);
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 
