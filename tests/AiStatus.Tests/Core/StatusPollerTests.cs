@@ -420,7 +420,7 @@ public sealed class StatusPollerTests : IDisposable
     [Theory]
     [InlineData(false, 1)]
     [InlineData(true, 5)]
-    public async Task InitialCadence_QueuesNoRefreshAndExplicitStartupRefreshPollsOnce(
+    public async Task PreRunCadenceChange_QueuesNoRefreshAndExplicitStartupRefreshPollsOnce(
         bool reduced,
         int expectedMinutes)
     {
@@ -430,7 +430,7 @@ public sealed class StatusPollerTests : IDisposable
         StatusPoller poller = CreatePoller(
             [provider],
             timeProvider: time);
-        poller.SetInitialReducedCadence(reduced);
+        poller.SetReducedCadence(reduced);
         using var cancellation = new CancellationTokenSource();
 
         Task run = poller.RunAsync(cancellation.Token);

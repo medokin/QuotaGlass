@@ -5,7 +5,9 @@ namespace AiStatus.Core;
 
 public sealed class ThresholdWatcher
 {
-    private readonly HashSet<FiredKey> _fired = [];
+    private static readonly TimeSpan UnknownCycleRetention = TimeSpan.FromDays(1);
+    private const int MaximumRetainedMissingQuotaKeysPerProvider = 32;
+    private readonly Dictionary<FiredKey, DateTimeOffset> _fired = [];
     private double _warningPercent;
     private double _criticalPercent;
 
@@ -22,6 +24,8 @@ public sealed class ThresholdWatcher
         _warningPercent = warningPercent;
         _criticalPercent = criticalPercent;
     }
+
+    internal int FiredKeyCount => _fired.Count;
 
     public ImmutableArray<StatusAlert> Evaluate(StatusReport? previous, StatusReport next)
     {
@@ -67,7 +71,7 @@ public sealed class ThresholdWatcher
                 }
 
                 var key = new FiredKey(provider.Id, window.Label, kind.Value, window.ResetsAt);
-                if (_fired.Add(key))
+                if (_fired.TryAdd(key, next.FetchedAt))
                 {
                     alerts.Add(new StatusAlert(
                         provider.Id,
@@ -89,7 +93,7 @@ public sealed class ThresholdWatcher
         ImmutableArray<StatusAlert>.Builder alerts)
     {
         var key = new FiredKey(provider.Id, null, AlertKind.AuthExpired, null);
-        if (_fired.Add(key))
+        if (_fired.TryAdd(key, provider.FetchedAt))
         {
             alerts.Add(new StatusAlert(
                 provider.Id,
@@ -132,10 +136,22 @@ public sealed class ThresholdWatcher
 
     private void RemoveStaleKeys(StatusReport next)
     {
-        _fired.RemoveWhere(key => IsStale(key, next));
+        FiredKey[] stale = _fired
+            .Where(pair => IsStale(pair.Key, pair.Value, next))
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (FiredKey key in stale)
+        {
+            _fired.Remove(key);
+        }
+
+        TrimMissingQuotaKeys(next);
     }
 
-    private static bool IsStale(FiredKey key, StatusReport next)
+    private static bool IsStale(
+        FiredKey key,
+        DateTimeOffset firedAt,
+        StatusReport next)
     {
         ProviderSnapshot? provider = next.Providers
             .FirstOrDefault(candidate => candidate.Id == key.ProviderId);
@@ -153,12 +169,42 @@ public sealed class ThresholdWatcher
             .FirstOrDefault(candidate => candidate.Label == key.WindowLabel);
         if (window is null)
         {
-            return false;
+            return key.CycleResetsAt is DateTimeOffset reset
+                ? next.FetchedAt >= reset
+                : next.FetchedAt >= firedAt + UnknownCycleRetention;
         }
 
         return key.CycleResetsAt is not null
             && window.ResetsAt is not null
             && key.CycleResetsAt < window.ResetsAt;
+    }
+
+    private void TrimMissingQuotaKeys(StatusReport next)
+    {
+        foreach (ProviderSnapshot provider in next.Providers)
+        {
+            HashSet<string> currentLabels = provider.Windows
+                .Select(window => window.Label)
+                .ToHashSet(StringComparer.Ordinal);
+            FiredKey[] missing = _fired
+                .Where(pair =>
+                    pair.Key.ProviderId == provider.Id &&
+                    pair.Key.Kind != AlertKind.AuthExpired &&
+                    pair.Key.WindowLabel is string label &&
+                    !currentLabels.Contains(label))
+                .OrderBy(pair => pair.Value)
+                .ThenBy(pair => pair.Key.WindowLabel, StringComparer.Ordinal)
+                .Select(pair => pair.Key)
+                .ToArray();
+
+            // Unknown or renamed windows cannot be correlated forever. Keeping the newest
+            // 32 bounds memory at the cost of possibly re-alerting an evicted unknown cycle.
+            foreach (FiredKey key in missing.Take(
+                Math.Max(0, missing.Length - MaximumRetainedMissingQuotaKeysPerProvider)))
+            {
+                _fired.Remove(key);
+            }
+        }
     }
 
     private static string ThresholdMessage(string windowLabel, double percent, AlertKind kind) => kind switch

@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private ActivityStateMonitor? _activity;
     private TrayIconHost? _tray;
     private ApplicationSettingsCoordinator? _settingsCoordinator;
+    private ApplicationActivityCoordinator? _activityCoordinator;
     private ApplicationShutdownCoordinator? _shutdownCoordinator;
     private PollLoopFaultObserver? _pollLoopFaultObserver;
     private Task? _pollLoop;
@@ -117,17 +118,18 @@ public partial class App : System.Windows.Application
                 _poller.RequestRefresh,
                 _tray.ToggleOverlayAsync,
                 _log);
+            _activityCoordinator = new ApplicationActivityCoordinator(
+                _activity,
+                _poller,
+                _log);
 
             ApplyOverlaySettings(settings);
             _settingsStore.Changed += OnSettingsChanged;
-            _poller.SetInitialReducedCadence(_activity.IsReducedCadence);
-            _activity.Changed += OnActivityChanged;
 
-            _pollLoop = _poller.RunAsync(_applicationCancellation.Token);
+            _pollLoop = _activityCoordinator.Start(_applicationCancellation.Token);
             _pollLoopObservation = _pollLoopFaultObserver.ObserveAsync(
                 _pollLoop,
                 _applicationCancellation.Token);
-            _poller.RequestRefresh();
         }
         catch (OperationCanceledException) when (_applicationCancellation.IsCancellationRequested)
         {
@@ -190,21 +192,6 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private void OnActivityChanged(object? sender, EventArgs args)
-    {
-        try
-        {
-            if (Volatile.Read(ref _ownedResourcesDisposed) == 0 && _activity is not null)
-            {
-                _poller?.SetReducedCadence(_activity.IsReducedCadence);
-            }
-        }
-        catch (Exception exception)
-        {
-            TryLogTopLevelFailure(exception);
-        }
-    }
-
     private void ApplyOverlaySettings(AppSettings settings)
     {
         if (_overlay is null)
@@ -239,11 +226,6 @@ public partial class App : System.Windows.Application
             _settingsStore.Changed -= OnSettingsChanged;
         }
 
-        if (_activity is not null)
-        {
-            _activity.Changed -= OnActivityChanged;
-        }
-
         DisposeSafely(() => _tray?.Dispose());
         DisposeSafely(() =>
         {
@@ -256,6 +238,7 @@ public partial class App : System.Windows.Application
                 _hotkey?.Dispose();
             }
         });
+        DisposeSafely(() => _activityCoordinator?.Dispose());
         DisposeSafely(() => _activity?.Dispose());
         DisposeSafely(() => _providerRegistry?.Dispose());
         DisposeSafely(() => _settingsStore?.Dispose());

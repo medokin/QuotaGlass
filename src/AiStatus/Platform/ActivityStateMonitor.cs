@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using AiStatus.Core;
 using Microsoft.Win32;
 
 namespace AiStatus.Platform;
@@ -123,7 +124,7 @@ internal sealed class SystemActivityEventSource : IActivityEventSource
         PowerModeChanged?.Invoke();
 }
 
-public sealed class ActivityStateMonitor : IDisposable
+public sealed class ActivityStateMonitor : IDisposable, IActivityCadenceSource
 {
     private static readonly TimeSpan IdleThreshold = TimeSpan.FromMinutes(5);
     private readonly object _gate = new();
@@ -135,6 +136,7 @@ public sealed class ActivityStateMonitor : IDisposable
     private readonly IActivitySampler _sampler;
     private bool _isLocked;
     private bool _isReducedCadence;
+    private long _cadenceVersion;
     private bool _disposed;
 
     public ActivityStateMonitor()
@@ -173,6 +175,36 @@ public sealed class ActivityStateMonitor : IDisposable
             {
                 return _isReducedCadence;
             }
+        }
+    }
+
+    ActivityCadenceSnapshot IActivityCadenceSource.Current
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return new ActivityCadenceSnapshot(_cadenceVersion, _isReducedCadence);
+            }
+        }
+    }
+
+    ActivityCadenceSnapshot IActivityCadenceSource.Subscribe(EventHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            Changed += handler;
+            return new ActivityCadenceSnapshot(_cadenceVersion, _isReducedCadence);
+        }
+    }
+
+    void IActivityCadenceSource.Unsubscribe(EventHandler handler)
+    {
+        lock (_gate)
+        {
+            Changed -= handler;
         }
     }
 
@@ -252,6 +284,7 @@ public sealed class ActivityStateMonitor : IDisposable
                 }
 
                 _isReducedCadence = reducedCadence;
+                _cadenceVersion++;
                 handlers = Changed;
             }
 

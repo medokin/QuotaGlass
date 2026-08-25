@@ -150,6 +150,61 @@ public sealed class ApplicationCompositionTests : IDisposable
         Assert.Equal(1, refreshes);
     }
 
+    [Theory]
+    [InlineData(ActivityTransitionBoundary.BeforeSubscription, 1)]
+    [InlineData(ActivityTransitionBoundary.BetweenSnapshotAndInitialApplication, 1)]
+    [InlineData(ActivityTransitionBoundary.AfterSubscriptionBeforeRun, 1)]
+    [InlineData(ActivityTransitionBoundary.JustAfterRun, 2)]
+    public void ActivityStartup_TransitionsAreAppliedWithoutStaleOverwrite(
+        ActivityTransitionBoundary boundary,
+        int expectedRefreshes)
+    {
+        // Break caught: an activity transition is missed or overwritten during startup wiring.
+        var activity = new FakeActivityCadenceSource();
+        var poller = new FakeActivityCadencePoller();
+
+        if (boundary == ActivityTransitionBoundary.BeforeSubscription)
+        {
+            activity.TransitionTo(reduced: true);
+        }
+        else if (boundary == ActivityTransitionBoundary.BetweenSnapshotAndInitialApplication)
+        {
+            activity.AfterSubscriptionSnapshot = () => activity.TransitionTo(reduced: true);
+        }
+        else if (boundary == ActivityTransitionBoundary.AfterSubscriptionBeforeRun)
+        {
+            poller.AfterInitialCadenceApplication = () => activity.TransitionTo(reduced: true);
+        }
+        else
+        {
+            poller.AfterRunStarted = () => activity.TransitionTo(reduced: true);
+        }
+
+        using var coordinator = new ApplicationActivityCoordinator(activity, poller, CreateLog());
+        Task rawPollLoop = coordinator.Start(CancellationToken.None);
+
+        Assert.Same(poller.RawPollLoop, rawPollLoop);
+        Assert.True(poller.IsReducedCadence);
+        Assert.Equal(expectedRefreshes, poller.RefreshCount);
+    }
+
+    [Fact]
+    public void ActivityStartup_DisposeRemovesItsSubscription()
+    {
+        // Break caught: activity notifications continue changing the poller after application disposal.
+        var activity = new FakeActivityCadenceSource();
+        var poller = new FakeActivityCadencePoller();
+        var coordinator = new ApplicationActivityCoordinator(activity, poller, CreateLog());
+        coordinator.Start(CancellationToken.None);
+
+        coordinator.Dispose();
+        activity.TransitionTo(reduced: true);
+
+        Assert.False(poller.IsReducedCadence);
+        Assert.Equal(1, poller.RefreshCount);
+        Assert.Equal(0, activity.SubscriberCount);
+    }
+
     [Fact]
     public async Task Shutdown_CancelsAndAwaitsPollLoopBeforeUiDisposalAndApplicationShutdown()
     {
@@ -323,5 +378,78 @@ public sealed class ApplicationCompositionTests : IDisposable
             action();
             completion.TrySetResult();
         }
+    }
+
+    public enum ActivityTransitionBoundary
+    {
+        BeforeSubscription,
+        BetweenSnapshotAndInitialApplication,
+        AfterSubscriptionBeforeRun,
+        JustAfterRun,
+    }
+
+    private sealed class FakeActivityCadenceSource : IActivityCadenceSource
+    {
+        private EventHandler? _changed;
+        private long _version;
+        private bool _reduced;
+
+        public Action? AfterSubscriptionSnapshot { get; set; }
+        public int SubscriberCount => _changed?.GetInvocationList().Length ?? 0;
+
+        public ActivityCadenceSnapshot Current => new(_version, _reduced);
+
+        public ActivityCadenceSnapshot Subscribe(EventHandler handler)
+        {
+            _changed += handler;
+            ActivityCadenceSnapshot snapshot = Current;
+            AfterSubscriptionSnapshot?.Invoke();
+            return snapshot;
+        }
+
+        public void Unsubscribe(EventHandler handler) => _changed -= handler;
+
+        public void TransitionTo(bool reduced)
+        {
+            _reduced = reduced;
+            _version++;
+            _changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private sealed class FakeActivityCadencePoller : IActivityCadencePoller
+    {
+        private bool _running;
+        private int _cadenceApplications;
+
+        public Action? AfterInitialCadenceApplication { get; set; }
+        public Action? AfterRunStarted { get; set; }
+        public bool IsReducedCadence { get; private set; }
+        public int RefreshCount { get; private set; }
+        public Task RawPollLoop { get; } = new TaskCompletionSource().Task;
+
+        public void SetReducedCadence(bool reduced)
+        {
+            bool changed = IsReducedCadence != reduced;
+            IsReducedCadence = reduced;
+            if (_running && changed)
+            {
+                RefreshCount++;
+            }
+
+            if (Interlocked.Increment(ref _cadenceApplications) == 1)
+            {
+                AfterInitialCadenceApplication?.Invoke();
+            }
+        }
+
+        public Task RunAsync(CancellationToken cancellationToken)
+        {
+            _running = true;
+            AfterRunStarted?.Invoke();
+            return RawPollLoop;
+        }
+
+        public void RequestRefresh() => RefreshCount++;
     }
 }

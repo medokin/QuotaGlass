@@ -14,6 +14,144 @@ internal interface IHotkeyRegistration : IDisposable
     bool IsRegistered { get; }
 }
 
+internal readonly record struct ActivityCadenceSnapshot(long Version, bool IsReducedCadence);
+
+internal interface IActivityCadenceSource
+{
+    ActivityCadenceSnapshot Current { get; }
+    ActivityCadenceSnapshot Subscribe(EventHandler handler);
+    void Unsubscribe(EventHandler handler);
+}
+
+internal interface IActivityCadencePoller
+{
+    void SetReducedCadence(bool reduced);
+    Task RunAsync(CancellationToken cancellationToken);
+    void RequestRefresh();
+}
+
+internal sealed class ApplicationActivityCoordinator : IDisposable
+{
+    private readonly object _gate = new();
+    private readonly IActivityCadenceSource _activity;
+    private readonly IActivityCadencePoller _poller;
+    private readonly RollingFileLog _log;
+    private long _appliedVersion = long.MinValue;
+    private bool _started;
+    private bool _subscribed;
+    private bool _disposed;
+
+    public ApplicationActivityCoordinator(
+        IActivityCadenceSource activity,
+        IActivityCadencePoller poller,
+        RollingFileLog log)
+    {
+        _activity = activity ?? throw new ArgumentNullException(nameof(activity));
+        _poller = poller ?? throw new ArgumentNullException(nameof(poller));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+    }
+
+    public Task Start(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_started)
+            {
+                throw new InvalidOperationException("The activity coordinator is already started.");
+            }
+
+            _started = true;
+        }
+
+        try
+        {
+            ActivityCadenceSnapshot initial = _activity.Subscribe(OnActivityChanged);
+            lock (_gate)
+            {
+                _subscribed = true;
+            }
+
+            ApplySnapshot(initial);
+            Task pollLoop = _poller.RunAsync(cancellationToken);
+            _poller.RequestRefresh();
+            return pollLoop;
+        }
+        catch
+        {
+            Unsubscribe();
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+        }
+
+        Unsubscribe();
+    }
+
+    private void OnActivityChanged(object? sender, EventArgs args)
+    {
+        try
+        {
+            ApplySnapshot(_activity.Current);
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+        }
+    }
+
+    private void ApplySnapshot(ActivityCadenceSnapshot snapshot)
+    {
+        lock (_gate)
+        {
+            if (_disposed || snapshot.Version <= _appliedVersion)
+            {
+                return;
+            }
+
+            _poller.SetReducedCadence(snapshot.IsReducedCadence);
+            _appliedVersion = snapshot.Version;
+        }
+    }
+
+    private void Unsubscribe()
+    {
+        bool unsubscribe;
+        lock (_gate)
+        {
+            unsubscribe = _subscribed;
+            _subscribed = false;
+        }
+
+        if (unsubscribe)
+        {
+            _activity.Unsubscribe(OnActivityChanged);
+        }
+    }
+
+    private void TryLogFailure(Exception exception)
+    {
+        try
+        {
+            _log.Write(LogArea.Platform, LogOutcome.Failed, exception: exception);
+        }
+        catch (Exception)
+        {
+        }
+    }
+}
+
 internal sealed class AppSettingsState
 {
     private AppSettings _current;

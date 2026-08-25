@@ -1,3 +1,4 @@
+using AiStatus.Core;
 using AiStatus.Platform;
 
 namespace AiStatus.Tests.Platform;
@@ -146,6 +147,29 @@ public sealed class ActivityStateMonitorTests
     public void ProductionSamplingInterval_IsNoLongerThanThirtySeconds()
     {
         Assert.True(PeriodicActivitySampler.SamplingInterval <= TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void CadenceSubscription_ReturnsCurrentVersionAndPublishesOnlyNewerSnapshots()
+    {
+        // Break caught: startup subscribes after reading state and misses a lock transition in that gap.
+        var events = new FakeActivityEventSource();
+        using var monitor = new ActivityStateMonitor(
+            events,
+            new FakeActivityState(),
+            new FakeActivitySampler());
+        events.RaiseSessionLockChanged(true);
+        var source = (IActivityCadenceSource)monitor;
+        var observed = new List<ActivityCadenceSnapshot>();
+        EventHandler handler = (_, _) => observed.Add(source.Current);
+
+        ActivityCadenceSnapshot initial = source.Subscribe(handler);
+        events.RaiseSessionLockChanged(false);
+        source.Unsubscribe(handler);
+        events.RaiseSessionLockChanged(true);
+
+        Assert.Equal(new ActivityCadenceSnapshot(1, true), initial);
+        Assert.Equal([new ActivityCadenceSnapshot(2, false)], observed);
     }
 
     [Fact]

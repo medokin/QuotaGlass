@@ -185,6 +185,80 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
+    public void Evaluate_MissingKnownWindowExpiresAtItsResetHorizon()
+    {
+        // Break caught: a removed known-cycle window survives forever after its reset time passes.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset reset = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
+        StatusReport warning = At(Report(80, reset), reset.AddMinutes(-5));
+        StatusReport missingBeforeReset = At(
+            Report("claude", "Claude", HealthState.Ok, []),
+            reset.AddSeconds(-1));
+        StatusReport missingAfterReset = At(
+            Report("claude", "Claude", HealthState.Ok, []),
+            reset.AddSeconds(1));
+        StatusReport nextCycle = At(Report(80, reset.AddDays(7)), reset.AddMinutes(1));
+
+        Assert.Single(watcher.Evaluate(At(Report(79, reset), reset.AddMinutes(-6)), warning));
+        Assert.Empty(watcher.Evaluate(warning, missingBeforeReset));
+        Assert.Equal(1, watcher.FiredKeyCount);
+
+        Assert.Empty(watcher.Evaluate(missingBeforeReset, missingAfterReset));
+        Assert.Equal(0, watcher.FiredKeyCount);
+        Assert.Equal(AlertKind.Warning,
+            Assert.Single(watcher.Evaluate(missingAfterReset, nextCycle)).Kind);
+    }
+
+    [Fact]
+    public void Evaluate_MissingUnknownResetExpiresAfterConservativeOneDayHorizon()
+    {
+        // Break caught: null-reset labels accumulate forever; expiry may repeat an alert after one day by design.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-08-25T12:00:00Z");
+        StatusReport below = UnknownResetReport("rolling", 79, checkedAt.AddMinutes(-1));
+        StatusReport warning = UnknownResetReport("rolling", 80, checkedAt);
+        StatusReport missingBeforeHorizon = At(
+            Report("claude", "Claude", HealthState.Ok, []),
+            checkedAt.AddHours(23));
+        StatusReport missingAtHorizon = At(
+            Report("claude", "Claude", HealthState.Ok, []),
+            checkedAt.AddDays(1));
+
+        Assert.Single(watcher.Evaluate(below, warning));
+        Assert.Empty(watcher.Evaluate(warning, missingBeforeHorizon));
+        Assert.Equal(1, watcher.FiredKeyCount);
+
+        Assert.Empty(watcher.Evaluate(missingBeforeHorizon, missingAtHorizon));
+        Assert.Equal(0, watcher.FiredKeyCount);
+        Assert.Equal(AlertKind.Warning,
+            Assert.Single(watcher.Evaluate(missingAtHorizon, UnknownResetReport(
+                "rolling",
+                80,
+                checkedAt.AddDays(1).AddMinutes(1)))).Kind);
+    }
+
+    [Fact]
+    public void Evaluate_RepeatedRenamedWindowsKeepOnlyBoundedMissingKeys()
+    {
+        // Break caught: every renamed provider window adds another retained key until process exit.
+        var watcher = new ThresholdWatcher(80, 95);
+        DateTimeOffset checkedAt = DateTimeOffset.Parse("2026-08-25T12:00:00Z");
+        DateTimeOffset reset = checkedAt.AddDays(7);
+        StatusReport? previous = null;
+
+        for (int index = 0; index < 200; index++)
+        {
+            StatusReport next = At(
+                Report(80, reset, windowLabel: $"renamed-{index}"),
+                checkedAt.AddMinutes(index));
+            Assert.Single(watcher.Evaluate(previous, next));
+            previous = next;
+        }
+
+        Assert.InRange(watcher.FiredKeyCount, 1, 33);
+    }
+
+    [Fact]
     public void Evaluate_MatchesPreviousWindowByExactLabel()
     {
         // Break caught: a prior percentage from a differently named window is used to infer a crossing.
@@ -264,4 +338,19 @@ public sealed class ThresholdWatcherTests
 
         Assert.Empty(watcher.Evaluate(Report(80, cycle), Report(81, cycle)));
     }
+
+    private static StatusReport At(StatusReport report, DateTimeOffset checkedAt) =>
+        report with { FetchedAt = checkedAt };
+
+    private static StatusReport UnknownResetReport(
+        string windowLabel,
+        double percent,
+        DateTimeOffset checkedAt) =>
+        At(
+            Report(
+                "claude",
+                "Claude",
+                HealthState.Ok,
+                [new UsageWindow(windowLabel, percent, null, Severity.Normal)]),
+            checkedAt);
 }

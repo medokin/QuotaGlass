@@ -5,7 +5,7 @@ using AiStatus.Providers;
 
 namespace AiStatus.Core;
 
-public sealed class StatusPoller
+public sealed class StatusPoller : IActivityCadencePoller
 {
     private static readonly TimeSpan DefaultProviderTimeout = TimeSpan.FromSeconds(10);
     private readonly IReadOnlyList<IStatusProvider> _providers;
@@ -15,6 +15,7 @@ public sealed class StatusPoller
     private readonly TimeSpan _providerTimeout;
     private readonly SynchronizationContext? _synchronizationContext;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
+    private readonly object _cadenceGate = new();
     private readonly object _notificationGate = new();
     private readonly Queue<StatusReport> _notificationQueue = new();
     private readonly Channel<bool> _refreshRequests = Channel.CreateUnbounded<bool>(
@@ -95,9 +96,14 @@ public sealed class StatusPoller
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref _runActive, 1, 0) != 0)
+        lock (_cadenceGate)
         {
-            throw new InvalidOperationException("The status poller is already running.");
+            if (_runActive != 0)
+            {
+                throw new InvalidOperationException("The status poller is already running.");
+            }
+
+            Volatile.Write(ref _runActive, 1);
         }
 
         PeriodicTimer? timer = null;
@@ -142,7 +148,10 @@ public sealed class StatusPoller
         {
             timer?.Dispose();
             await GetNotificationPump();
-            Volatile.Write(ref _runActive, 0);
+            lock (_cadenceGate)
+            {
+                Volatile.Write(ref _runActive, 0);
+            }
         }
     }
 
@@ -157,20 +166,13 @@ public sealed class StatusPoller
     public void SetReducedCadence(bool reduced)
     {
         int value = reduced ? 1 : 0;
-        if (Interlocked.Exchange(ref _reducedCadence, value) != value)
+        lock (_cadenceGate)
         {
-            RequestRefresh();
+            if (Interlocked.Exchange(ref _reducedCadence, value) != value && _runActive != 0)
+            {
+                RequestRefresh();
+            }
         }
-    }
-
-    internal void SetInitialReducedCadence(bool reduced)
-    {
-        if (Volatile.Read(ref _runActive) != 0)
-        {
-            throw new InvalidOperationException("Initial cadence can only be set before the poller starts.");
-        }
-
-        Volatile.Write(ref _reducedCadence, reduced ? 1 : 0);
     }
 
     private static bool IsEnabled(AppSettings settings, string providerId) =>
