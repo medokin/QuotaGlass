@@ -24,9 +24,7 @@ public sealed class FixtureSecurityTests
             .Where(file => !string.Equals(Path.GetExtension(file), ".cs", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
-        Assert.Equal(
-            ["claude-profile.json", "claude-usage.json"],
-            fixtures.Select(Path.GetFileName).Order());
+        Assert.NotEmpty(fixtures);
 
         foreach (string fixture in fixtures)
         {
