@@ -176,6 +176,8 @@ function Confirm-ReleaseCommit {
         [string] $BranchRef
     )
 
+    $PSNativeCommandUseErrorActionPreference = $false
+
     $null = & git -C $RepositoryPath cat-file -e "$Commit^{commit}" 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "Release commit '$Commit' does not exist in '$RepositoryPath'."

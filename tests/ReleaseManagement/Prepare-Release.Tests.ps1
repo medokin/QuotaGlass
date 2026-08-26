@@ -239,4 +239,33 @@ Describe 'release commit provenance' {
                 -BranchRef master } |
             Should -Throw -ExpectedMessage '*not contained in*master*'
     }
+
+    It 'translates the git exit code when native command errors are enabled' {
+        $env:RELEASE_TEST_SCRIPT = $scriptPath
+        $env:RELEASE_TEST_REPOSITORY = $repositoryPath
+        $env:RELEASE_TEST_COMMIT = $featureCommit
+        try {
+            $output = pwsh -NoProfile -Command @'
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+. $env:RELEASE_TEST_SCRIPT
+try {
+    Confirm-ReleaseCommit `
+        -RepositoryPath $env:RELEASE_TEST_REPOSITORY `
+        -Commit $env:RELEASE_TEST_COMMIT `
+        -BranchRef master
+}
+catch {
+    $_.Exception.Message
+}
+'@
+        }
+        finally {
+            Remove-Item Env:RELEASE_TEST_SCRIPT
+            Remove-Item Env:RELEASE_TEST_REPOSITORY
+            Remove-Item Env:RELEASE_TEST_COMMIT
+        }
+
+        $output | Should -BeLike '*not contained in*master*'
+    }
 }
