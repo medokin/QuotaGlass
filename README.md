@@ -5,6 +5,12 @@ status at a glance. It displays current usage windows in a tray popup, can keep
 an optional overlay above other windows, and raises notifications when usage
 crosses configured thresholds.
 
+<img src="docs/assets/overlay.png"
+     alt="QuotaGlass overlay showing mocked Claude, Codex, and Ollama status data"
+     width="400">
+
+*Overlay shown with mocked provider data.*
+
 ## Features
 
 - Claude and Codex subscription usage windows
