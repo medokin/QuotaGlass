@@ -136,8 +136,9 @@ name. Both files are uploaded together as an immutable workflow artifact.
 
 The final job uses a protected GitHub `release` environment. Its required
 reviewer is the manual acceptance gate for the exact packaged candidate. Before
-approving the environment, a maintainer downloads the workflow artifact and
-records the applicable results in `docs/manual-test-checklist.md`.
+approving the environment, a maintainer downloads the workflow artifact,
+records the applicable results in `docs/manual-test-checklist.md`, and confirms
+repository release immutability is enabled.
 
 After approval, the job downloads the exact workflow artifact and reconciles
 the two release assets. Missing assets are uploaded individually. Existing

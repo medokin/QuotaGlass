@@ -331,15 +331,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          immutable_releases="$(
-            gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" \
-              --jq '.enabled'
-          )"
-          if [[ "${immutable_releases}" != 'true' ]]; then
-            echo 'Repository release immutability must be enabled before publication.' >&2
-            exit 1
-          fi
-
           verify_release_target() {
             local release_target
             local tag_sha

@@ -89,8 +89,9 @@ uses this format:
 
 Published tags, releases, and assets are immutable. Correct a published release
 with a new patch release. Do not move tags, replace assets, or republish an
-existing version. The workflow refuses publication unless repository release
-immutability is enabled and verifies the immutable state after publication.
+existing version. The protected environment reviewer confirms that repository
+release immutability is enabled, and the workflow verifies the immutable state
+after publication.
 
 ## Draft release recovery
 
@@ -181,8 +182,10 @@ request runs may need manual workflow approval before the checks can complete.
 
 Enable **Release immutability** in the repository settings before approving the
 first release. This GitHub setting locks the tag and release assets after
-publication. The publication job checks the repository setting before upload
-and verifies that the resulting release is immutable.
+publication. GitHub does not allow the workflow's `GITHUB_TOKEN` to read this
+administrative setting, so the protected environment reviewer must confirm it
+before approval. The publication job verifies that the resulting release is
+immutable.
 
 ### Release environment
 
@@ -193,9 +196,9 @@ Create an environment named `release` under **Settings > Environments**:
 - Limit deployment branches to `master` or protected branches.
 
 The reviewer approves publication only after testing the exact workflow
-artifact. The environment approval is separate from the release pull request
-approval because the final Windows binary is built from the merged, tagged
-commit.
+artifact and confirming release immutability is enabled. The environment
+approval is separate from the release pull request approval because the final
+Windows binary is built from the merged, tagged commit.
 
 ## Initial release
 

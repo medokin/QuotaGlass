@@ -183,8 +183,8 @@ For each expected file, upload it when absent. When present, download it to a
 temporary directory and compare SHA256 with the local candidate. Fail on a
 mismatch without clobbering. Require the remote asset names to equal the ZIP
 and checksum names, require the tag and draft target to equal the packaged SHA,
-verify repository release immutability, then publish the draft release and
-confirm its immutable state.
+require the protected environment reviewer to confirm repository release
+immutability, then publish the draft release and confirm its immutable state.
 
 - [ ] **Step 5: Validate and rehearse the workflow locally**
 
