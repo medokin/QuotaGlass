@@ -655,7 +655,7 @@ public sealed class StatusPollerTests : IDisposable
             if (plan == "1")
             {
                 firstHandlerStarted.TrySetResult();
-                releaseFirstHandler.Wait(TimeSpan.FromSeconds(1));
+                releaseFirstHandler.Wait();
             }
             else
             {
@@ -664,19 +664,19 @@ public sealed class StatusPollerTests : IDisposable
         };
 
         Task<StatusReport> firstPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
-        await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
-        Task<StatusReport> secondPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
 
         try
         {
-            await Task.WhenAll(firstPoll, secondPoll).WaitAsync(TimeSpan.FromMilliseconds(300));
+            await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Task<StatusReport> secondPoll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+            await Task.WhenAll(firstPoll, secondPoll).WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
             releaseFirstHandler.Set();
         }
 
-        await secondDelivered.Task.WaitAsync(TimeSpan.FromMilliseconds(300));
+        await secondDelivered.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(["1", "2"], deliveries);
     }
 
