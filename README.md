@@ -32,10 +32,10 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0),
 then run:
 
 ```powershell
-dotnet restore AiStatus.slnx
-dotnet build AiStatus.slnx -c Release --no-restore
-dotnet test AiStatus.slnx -c Release --no-build
-dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64
+dotnet restore QuotaGlass.slnx
+dotnet build QuotaGlass.slnx -c Release --no-restore
+dotnet test QuotaGlass.slnx -c Release --no-build
+dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win-x64
 ```
 
 The publish profile produces a framework-dependent, single-file
@@ -43,11 +43,11 @@ The publish profile produces a framework-dependent, single-file
 
 ## Configuration
 
-QuotaGlass creates `%APPDATA%\ai-status\settings.json` on first launch. The
+QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The
 defaults poll once per minute while active, use 80 and 95 percent warning
 thresholds, keep the overlay hidden, and leave autostart disabled.
 
-Runtime logs are written to `%APPDATA%\ai-status\log.txt`. Logs contain status
+Runtime logs are written to `%APPDATA%\QuotaGlass\log.txt`. Logs contain status
 categories only, not exception messages, headers, bodies, tokens, account IDs,
 or email addresses.
 

@@ -59,17 +59,17 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | LOG-04 | Logs contain no access tokens or refresh tokens. | PASS | A same-user published smoke run created one runtime log; bearer, JWT, access-token, and refresh-token counts were all 0. | No matched text was printed; the prior absent log state was restored. |
 | LOG-05 | Logs contain no account or user identifiers. | PASS | A same-user published smoke run created one runtime log; account-ID and user-ID counts were both 0. | No matched text was printed; the prior absent log state was restored. |
 | LOG-06 | Logs contain no email addresses. | PASS | A same-user published smoke run created one runtime log; the conservative email-marker count was 0. | No matched text was printed; the prior absent log state was restored. |
-| SETTINGS-01 | `%APPDATA%\ai-status\settings.json` contains no access token, refresh token, account identifier, email address, or response body. | PASS | Production `SettingsStore` saved defaults; safe scan counts were 0 for access token, refresh token, account ID, user ID, email, and response body. | The prior absent settings state was restored after the scan. |
+| SETTINGS-01 | `%APPDATA%\QuotaGlass\settings.json` contains no access token, refresh token, account identifier, email address, or response body. | PASS | Production `SettingsStore` saved defaults; safe scan counts were 0 for access token, refresh token, account ID, user ID, email, and response body. | The prior absent settings state was restored after the scan. |
 
 ## Release verification
 
 | Check | Status | Evidence | Notes |
 |---|---|---|---|
-| `dotnet test AiStatus.slnx -c Release` | PASS | 257 passed, 0 failed, 0 skipped. | Release configuration. |
-| `dotnet publish src/AiStatus/AiStatus.csproj -p:PublishProfile=win-x64` | PASS | Publish exited 0. | Framework-dependent single-file profile. |
+| `dotnet test QuotaGlass.slnx -c Release` | PASS | 258 passed, 0 failed, 0 skipped. | Release configuration. |
+| `dotnet publish src/QuotaGlass/QuotaGlass.csproj -p:PublishProfile=win-x64` | PASS | Publish exited 0. | Framework-dependent single-file profile. |
 | Published artifact inventory | PASS | `QuotaGlass.exe`, 25,922,423 bytes; no other files. | Inventory taken from the profile publish directory. |
 | Fixture security test | PASS | Focused Release run: 1 passed, 0 failed; all 6 fixture files scanned. | No matched fixture content was printed. |
-| `dotnet build AiStatus.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
+| `dotnet build QuotaGlass.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
 | `git diff --check` | PASS | Exit 0 with no output. | Run before commit. |
 
 ## Sign-off

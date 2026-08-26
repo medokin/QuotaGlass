@@ -1,0 +1,187 @@
+<UserControl x:Class="QuotaGlass.Ui.Controls.ProviderCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:QuotaGlass.Ui.Controls"
+             xmlns:converters="clr-namespace:QuotaGlass.Ui.Converters"
+             d:DesignHeight="220"
+             d:DesignWidth="360"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             FontFamily="Segoe UI Variable Text, Segoe UI"
+             Foreground="#EAF0F6"
+             SnapsToDevicePixels="True"
+             UseLayoutRounding="True">
+    <UserControl.Resources>
+        <converters:PercentToGridLengthConverter x:Key="PercentToGridLengthConverter" />
+        <converters:ResetTimeConverter x:Key="ResetTimeConverter" />
+        <converters:SeverityToBrushConverter x:Key="SeverityToBrushConverter" />
+        <SolidColorBrush x:Key="AlloyBrush" Color="#8F9CAA" />
+        <SolidColorBrush x:Key="DividerBrush" Color="#3D4853" />
+        <SolidColorBrush x:Key="RunwayBrush" Color="#29323B" />
+        <sys:String x:Key="ResetPrefix" xmlns:sys="clr-namespace:System;assembly=System.Runtime">resets</sys:String>
+    </UserControl.Resources>
+
+    <Border Padding="14,12"
+            Background="#161C23"
+            BorderBrush="{StaticResource DividerBrush}"
+            BorderThickness="1"
+            CornerRadius="4">
+        <StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="6"
+                        Height="6"
+                        Margin="0,1,8,0"
+                        VerticalAlignment="Center"
+                        Background="{Binding SignalSeverity, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}, Converter={StaticResource SeverityToBrushConverter}}"
+                        CornerRadius="3" />
+                <TextBlock Grid.Column="1"
+                           VerticalAlignment="Center"
+                           FontFamily="Segoe UI Variable Display, Segoe UI"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Text="{Binding Snapshot.Label, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}" />
+                <TextBlock Grid.Column="2"
+                           Margin="12,0,0,0"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           Foreground="{StaticResource AlloyBrush}"
+                           Text="{Binding Snapshot.PlanLabel, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <Trigger Property="Text" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Trigger>
+                                <Trigger Property="Text" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+
+            <TextBlock Margin="14,5,0,0"
+                       FontSize="11"
+                       Foreground="{StaticResource AlloyBrush}"
+                       Text="{Binding HealthText, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}"
+                       TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <ItemsControl Margin="14,10,0,0"
+                          ItemsSource="{Binding Snapshot.Windows, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}"
+                          Visibility="{Binding WindowsVisibility, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="0,0,0,11">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontSize="11"
+                                           Foreground="{StaticResource AlloyBrush}"
+                                           Text="{Binding Label}" />
+                                <TextBlock Grid.Column="1"
+                                           Margin="12,0,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding Percent, StringFormat={}{0:0.#}%}" />
+                            </Grid>
+
+                            <Border Height="6"
+                                    Margin="0,6,0,0"
+                                    Background="{StaticResource RunwayBrush}"
+                                    CornerRadius="3">
+                                <Grid ClipToBounds="True">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="{Binding Percent, Converter={StaticResource PercentToGridLengthConverter}}" />
+                                        <ColumnDefinition Width="{Binding Percent, Converter={StaticResource PercentToGridLengthConverter}, ConverterParameter=Remaining}" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Background="{Binding Severity, Converter={StaticResource SeverityToBrushConverter}}"
+                                            CornerRadius="3" />
+                                </Grid>
+                            </Border>
+
+                            <TextBlock Margin="0,5,0,0"
+                                       FontFamily="Cascadia Mono, Consolas"
+                                       FontSize="10"
+                                       Foreground="{StaticResource AlloyBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ResetsAt}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Run FontFamily="Segoe UI Variable Text, Segoe UI"
+                                     Text="{StaticResource ResetPrefix}" />
+                                <Run Text=" " />
+                                <Run Text="{Binding ResetsAt, Converter={StaticResource ResetTimeConverter}}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <ItemsControl Margin="14,0,0,0"
+                          ItemsSource="{Binding Snapshot.Info, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource AlloyBrush}"
+                                       Text="{Binding Label}" />
+                            <TextBlock Grid.Column="1"
+                                       Margin="14,0,0,0"
+                                       HorizontalAlignment="Right"
+                                       FontFamily="Cascadia Mono, Consolas"
+                                       FontSize="11"
+                                       Text="{Binding Value}"
+                                       TextAlignment="Right" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Margin="14,2,0,0"
+                       FontFamily="Cascadia Mono, Consolas"
+                       FontSize="10"
+                       Foreground="{StaticResource AlloyBrush}"
+                       Text="{Binding UpdatedText, RelativeSource={RelativeSource AncestorType={x:Type controls:ProviderCard}}}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </StackPanel>
+    </Border>
+</UserControl>

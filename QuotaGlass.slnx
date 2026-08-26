@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/QuotaGlass/QuotaGlass.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/QuotaGlass.Tests/QuotaGlass.Tests.csproj" />
+  </Folder>
+</Solution>
