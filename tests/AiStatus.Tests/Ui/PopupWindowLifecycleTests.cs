@@ -3,6 +3,7 @@ using AiStatus.Ui;
 
 namespace AiStatus.Tests.Ui;
 
+[Collection(WpfStaCollection.Name)]
 public sealed class PopupWindowLifecycleTests
 {
     [Fact]

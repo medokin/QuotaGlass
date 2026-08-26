@@ -3,6 +3,7 @@ using AiStatus.Ui.Controls;
 
 namespace AiStatus.Tests.Ui;
 
+[Collection(WpfStaCollection.Name)]
 public sealed class UiConstructionSmokeTests
 {
     [Fact]
