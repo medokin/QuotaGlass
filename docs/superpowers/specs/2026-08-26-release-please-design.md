@@ -15,9 +15,11 @@ The implementation branch starts from the current `origin/master` commit
 Please bootstrap boundary, so only commits after it contribute to the first
 generated release.
 
-The repository has no existing tags or GitHub Releases. Release Please starts
-from version `0.0.0`. The implementation pull request will be squash merged with
-a `feat(release): ...` title, so its expected first proposed release is `0.1.0`.
+The repository has no existing tags or GitHub Releases. Release Please uses
+`0.0.1` as its bootstrap baseline. This avoids an upstream Release Please bug
+where a `0.0.0` manifest ignores pre-major bump options and proposes `1.0.0`.
+The implementation pull request will be squash merged with a
+`feat(release): ...` title, so its expected first proposed release is `0.1.0`.
 
 Pull request #4 and branch `codex/release-management` remain unchanged. They are
 context for the older manual-tag design only.
@@ -42,7 +44,7 @@ disables component prefixes in tags, includes the `v` prefix, enables
 fixes. Breaking entries continue to be represented by Release Please. The
 release pull request title follows `chore(release): release X.Y.Z`.
 
-`.release-please-manifest.json` and `version.txt` both begin at `0.0.0`.
+`.release-please-manifest.json` and `version.txt` both begin at `0.0.1`.
 Release Please updates both version records and creates `CHANGELOG.md` in its
 generated release pull request. This implementation does not pre-create the
 changelog.

@@ -35,7 +35,7 @@
 
 **Interfaces:**
 - Consumes: default branch name `master` and bootstrap commit `f296126828d463660a9ab24bbe53adae3ecacf37`
-- Produces: a root Release Please package named `QuotaGlass`, initial version `0.0.0`, `vX.Y.Z` tags, draft releases, and semantic release pull request titles
+- Produces: a root Release Please package named `QuotaGlass`, bootstrap baseline `0.0.1`, `vX.Y.Z` tags, draft releases, and semantic release pull request titles
 
 - [ ] **Step 1: Record the failing bootstrap assertions**
 
@@ -57,8 +57,9 @@ Expected: FAIL listing all three missing files.
 
 - [ ] **Step 2: Add the manifest and version file**
 
-Create `.release-please-manifest.json` with root version `0.0.0`. Create
-`version.txt` containing exactly `0.0.0` and a final newline.
+Create `.release-please-manifest.json` with root version `0.0.1`. Create
+`version.txt` containing exactly `0.0.1` and a final newline. This avoids the
+upstream Release Please `0.0.0` pre-major versioning bug.
 
 - [ ] **Step 3: Add the Release Please configuration**
 
@@ -73,7 +74,7 @@ changelog sections. Configure root package `.` with package name `QuotaGlass`.
 - [ ] **Step 4: Validate the configuration**
 
 Parse both JSON files, validate the config against the official Release Please
-schema in a temporary directory, assert both initial versions are `0.0.0`, and
+schema in a temporary directory, assert both initial versions are `0.0.1`, and
 confirm `CHANGELOG.md` remains absent.
 
 - [ ] **Step 5: Commit the bootstrap configuration**

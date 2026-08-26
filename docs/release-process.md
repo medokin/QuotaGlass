@@ -202,7 +202,9 @@ Windows binary is built from the merged, tagged commit.
 
 ## Initial release
 
-Release Please starts at `0.0.0` and ignores commits at or before the configured
-bootstrap commit. Squash merging the implementation pull request with its
+Release Please uses `0.0.1` as its bootstrap baseline and ignores commits at or
+before the configured bootstrap commit. The baseline avoids an upstream
+Release Please bug where `0.0.0` ignores pre-major bump options and proposes
+`1.0.0`. Squash merging the implementation pull request with its
 `feat(release): ...` title should produce the first release pull request for
 `0.1.0`. `CHANGELOG.md` first appears in that generated pull request.
