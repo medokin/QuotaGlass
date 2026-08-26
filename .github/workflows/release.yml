@@ -1,0 +1,217 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable SemVer tag to validate without publishing
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate, build, test, and package
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+    outputs:
+      artifact-name: ${{ steps.metadata.outputs.artifact-name }}
+      checksum-name: ${{ steps.metadata.outputs.checksum-name }}
+      release-archive-name: ${{ steps.metadata.outputs.release-archive-name }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Test release tooling
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester -Path tests/ReleaseManagement/Prepare-Release.Tests.ps1 -CI -Output Detailed
+
+      - name: Resolve and validate release metadata
+        id: metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          . ./scripts/Prepare-Release.ps1
+
+          $tag = if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $env:GITHUB_REF_NAME
+          }
+          else {
+            $env:INPUT_TAG
+          }
+
+          $version = Resolve-ReleaseVersion -Tag $tag
+          Confirm-ReleaseCommit `
+            -RepositoryPath . `
+            -Commit $env:GITHUB_SHA `
+            -BranchRef origin/master
+
+          $run = gh api `
+            "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" |
+            ConvertFrom-Json
+          $releaseDate = ([DateTimeOffset] $run.created_at).UtcDateTime.ToString('yyyy-MM-dd')
+          $releaseNotes = Get-ReleaseNotes `
+            -ChangelogPath CHANGELOG.md `
+            -Version $version `
+            -ExpectedDate $releaseDate
+
+          $null = New-Item -ItemType Directory -Path artifacts -Force
+          $notesPath = Join-Path artifacts 'release-notes.md'
+          [IO.File]::WriteAllText(
+            $notesPath,
+            "$releaseNotes`n",
+            [Text.UTF8Encoding]::new($false))
+
+          $major = $version.Split('.')[0]
+          $releaseArchiveName = "QuotaGlass-$tag-win-x64.zip"
+          $checksumName = "QuotaGlass-$tag-win-x64.sha256"
+          $artifactName = "QuotaGlass-$tag-release"
+          "artifact-name=$artifactName" >> $env:GITHUB_OUTPUT
+          "checksum-name=$checksumName" >> $env:GITHUB_OUTPUT
+          "major=$major" >> $env:GITHUB_OUTPUT
+          "release-archive-name=$releaseArchiveName" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore
+        run: dotnet restore QuotaGlass.slnx
+
+      - name: Build
+        shell: pwsh
+        env:
+          RELEASE_MAJOR: ${{ steps.metadata.outputs.major }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          dotnet build QuotaGlass.slnx -c Release --no-restore `
+            -p:Version=$env:RELEASE_VERSION `
+            -p:AssemblyVersion="$env:RELEASE_MAJOR.0.0.0" `
+            -p:FileVersion="$env:RELEASE_VERSION.0" `
+            -p:InformationalVersion=$env:RELEASE_VERSION `
+            -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Test
+        run: dotnet test QuotaGlass.slnx -c Release --no-build
+
+      - name: Publish
+        shell: pwsh
+        env:
+          RELEASE_MAJOR: ${{ steps.metadata.outputs.major }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+            -c Release `
+            -p:PublishProfile=win-x64 `
+            -o artifacts/QuotaGlass-win-x64 `
+            -p:Version=$env:RELEASE_VERSION `
+            -p:AssemblyVersion="$env:RELEASE_MAJOR.0.0.0" `
+            -p:FileVersion="$env:RELEASE_VERSION.0" `
+            -p:InformationalVersion=$env:RELEASE_VERSION `
+            -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Verify and package release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          . ./scripts/Prepare-Release.ps1
+
+          $executablePath = 'artifacts/QuotaGlass-win-x64/QuotaGlass.exe'
+          $publishedFiles = @(Get-ChildItem -LiteralPath artifacts/QuotaGlass-win-x64 -File)
+          if ($publishedFiles.Count -ne 1 -or $publishedFiles[0].Name -ne 'QuotaGlass.exe') {
+            throw "Expected only QuotaGlass.exe, found: $($publishedFiles.Name -join ', ')"
+          }
+
+          Confirm-ReleaseBinaryVersion `
+            -ExecutablePath $executablePath `
+            -Version $env:RELEASE_VERSION
+          $null = New-ReleaseArtifacts `
+            -ExecutablePath $executablePath `
+            -OutputDirectory artifacts/release `
+            -Tag $env:RELEASE_TAG
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact-name }}
+          path: |
+            artifacts/release/${{ steps.metadata.outputs.release-archive-name }}
+            artifacts/release/${{ steps.metadata.outputs.checksum-name }}
+            artifacts/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push'
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified release candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ARTIFACT: ${{ needs.prepare.outputs.artifact-name }}
+        run: |
+          gh run download "${GITHUB_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${RELEASE_ARTIFACT}" \
+            --dir artifacts
+
+      - name: Publish immutable GitHub Release
+        shell: bash
+        env:
+          CHECKSUM_NAME: ${{ needs.prepare.outputs.checksum-name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ARCHIVE_NAME: ${{ needs.prepare.outputs.release-archive-name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; refusing to replace it." >&2
+            exit 1
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            "artifacts/${RELEASE_ARCHIVE_NAME}" \
+            "artifacts/${CHECKSUM_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${RELEASE_TAG}" \
+            --notes-file artifacts/release-notes.md

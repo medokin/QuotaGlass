@@ -57,6 +57,18 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Test release tooling
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester -Path tests/ReleaseManagement/Prepare-Release.Tests.ps1 -CI -Output Detailed
+
       - name: Restore
         run: dotnet restore QuotaGlass.slnx
 
