@@ -113,6 +113,28 @@ Describe 'Get-ReleaseNotes' {
             Should -Throw -ExpectedMessage '*exactly one*1.2.3*'
     }
 
+    It 'rejects a malformed duplicate version section' {
+        $path = Join-Path $TestDrive 'malformed-duplicate.md'
+        @'
+# Changelog
+
+## [1.2.3] - 2026-08-26
+
+### Added
+
+- First copy.
+
+## [1.2.3]
+
+### Fixed
+
+- Malformed second copy.
+'@ | Set-Content -LiteralPath $path
+
+        { Get-ReleaseNotes -ChangelogPath $path -Version '1.2.3' -ExpectedDate '2026-08-26' } |
+            Should -Throw -ExpectedMessage '*exactly one*1.2.3*'
+    }
+
     It 'rejects a section with a different release date' {
         $path = Join-Path $TestDrive 'wrong-date.md'
         @'
@@ -201,6 +223,63 @@ Describe 'Confirm-ReleaseBinaryVersion' {
 
         { Confirm-ReleaseBinaryVersion -ExecutablePath $executablePath -Version '99.98.97' } |
             Should -Throw -ExpectedMessage '*ProductVersion*99.98.97*FileVersion*99.98.97.0*'
+    }
+}
+
+Describe 'Confirm-ReleaseAssemblyVersion' {
+    BeforeAll {
+        $correctAssemblyPath = Join-Path $TestDrive 'CorrectReleaseFixture.dll'
+        Add-Type -TypeDefinition @'
+using System.Reflection;
+
+[assembly: AssemblyVersion("7.0.0.0")]
+[assembly: AssemblyFileVersion("7.8.9.0")]
+[assembly: AssemblyInformationalVersion("7.8.9")]
+
+public sealed class CorrectReleaseFixture {}
+'@ -OutputAssembly $correctAssemblyPath
+
+        $wrongAssemblyVersionPath = Join-Path $TestDrive 'WrongAssemblyVersionFixture.dll'
+        Add-Type -TypeDefinition @'
+using System.Reflection;
+
+[assembly: AssemblyVersion("6.0.0.0")]
+[assembly: AssemblyFileVersion("7.8.9.0")]
+[assembly: AssemblyInformationalVersion("7.8.9")]
+
+public sealed class WrongAssemblyVersionFixture {}
+'@ -OutputAssembly $wrongAssemblyVersionPath
+
+        $wrongInformationalVersionPath = Join-Path $TestDrive 'WrongInformationalVersionFixture.dll'
+        Add-Type -TypeDefinition @'
+using System.Reflection;
+
+[assembly: AssemblyVersion("7.0.0.0")]
+[assembly: AssemblyFileVersion("7.8.9.0")]
+[assembly: AssemblyInformationalVersion("7.8.8")]
+
+public sealed class WrongInformationalVersionFixture {}
+'@ -OutputAssembly $wrongInformationalVersionPath
+    }
+
+    It 'accepts matching assembly, file, and informational versions' {
+        { Confirm-ReleaseAssemblyVersion `
+                -AssemblyPath $correctAssemblyPath `
+                -Version '7.8.9' } | Should -Not -Throw
+    }
+
+    It 'rejects an independently mismatched assembly version' {
+        { Confirm-ReleaseAssemblyVersion `
+                -AssemblyPath $wrongAssemblyVersionPath `
+                -Version '7.8.9' } |
+            Should -Throw -ExpectedMessage '*AssemblyVersion must be 7.0.0.0*'
+    }
+
+    It 'rejects an independently mismatched informational version' {
+        { Confirm-ReleaseAssemblyVersion `
+                -AssemblyPath $wrongInformationalVersionPath `
+                -Version '7.8.9' } |
+            Should -Throw -ExpectedMessage '*InformationalVersion must be 7.8.9*'
     }
 }
 

@@ -31,6 +31,16 @@ function Get-ReleaseNotes {
 
     $content = Get-Content -Raw -LiteralPath $ChangelogPath -ErrorAction Stop
     $escapedVersion = [regex]::Escape($Version)
+    $versionHeadingPattern = '^## \[' + $escapedVersion + '\][^\r\n]*\r?$'
+    $versionHeadings = [regex]::Matches(
+        $content,
+        $versionHeadingPattern,
+        [Text.RegularExpressions.RegexOptions]::Multiline)
+
+    if ($versionHeadings.Count -ne 1) {
+        throw "CHANGELOG.md must contain exactly one release section for version $Version."
+    }
+
     $headingPattern = '^## \[' + $escapedVersion + '\] - (\d{4}-\d{2}-\d{2})\r?$'
     $headings = [regex]::Matches(
         $content,
@@ -38,7 +48,7 @@ function Get-ReleaseNotes {
         [Text.RegularExpressions.RegexOptions]::Multiline)
 
     if ($headings.Count -ne 1) {
-        throw "CHANGELOG.md must contain exactly one release section for version $Version."
+        throw "The CHANGELOG.md section for version $Version must use '## [$Version] - YYYY-MM-DD'."
     }
 
     $heading = $headings[0]
@@ -160,6 +170,45 @@ function Confirm-ReleaseBinaryVersion {
             "Binary version mismatch. ProductVersion must be $Version but is " +
             "'$($versionInfo.ProductVersion)'; FileVersion must be $expectedFileVersion but is " +
             "'$($versionInfo.FileVersion)'.")
+    }
+}
+
+function Confirm-ReleaseAssemblyVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string] $AssemblyPath,
+
+        [Parameter(Mandatory)]
+        [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')]
+        [string] $Version
+    )
+
+    if (-not (Test-Path -LiteralPath $AssemblyPath -PathType Leaf)) {
+        throw "Published assembly not found at '$AssemblyPath'."
+    }
+
+    $major = $Version.Split('.')[0]
+    $expectedAssemblyVersion = "$major.0.0.0"
+    $assemblyVersion = [Reflection.AssemblyName]::GetAssemblyName($AssemblyPath).Version.ToString()
+    if ($assemblyVersion -ne $expectedAssemblyVersion) {
+        throw "AssemblyVersion must be $expectedAssemblyVersion but is '$assemblyVersion'."
+    }
+
+    $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($AssemblyPath))
+    $informationalVersionAttribute = @(
+        $assembly.GetCustomAttributesData() |
+            Where-Object AttributeType -eq ([Reflection.AssemblyInformationalVersionAttribute])
+    )
+    $informationalVersion = if ($informationalVersionAttribute.Count -eq 1) {
+        [string] $informationalVersionAttribute[0].ConstructorArguments[0].Value
+    }
+    else {
+        $null
+    }
+
+    if ($informationalVersion -ne $Version) {
+        throw "InformationalVersion must be $Version but is '$informationalVersion'."
     }
 }
 

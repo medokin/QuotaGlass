@@ -149,6 +149,7 @@ jobs:
           . ./scripts/Prepare-Release.ps1
 
           $executablePath = 'artifacts/QuotaGlass-win-x64/QuotaGlass.exe'
+          $assemblyPath = 'src/QuotaGlass/bin/Release/net10.0-windows10.0.19041.0/win-x64/QuotaGlass.dll'
           $publishedFiles = @(Get-ChildItem -LiteralPath artifacts/QuotaGlass-win-x64 -File)
           if ($publishedFiles.Count -ne 1 -or $publishedFiles[0].Name -ne 'QuotaGlass.exe') {
             throw "Expected only QuotaGlass.exe, found: $($publishedFiles.Name -join ', ')"
@@ -156,6 +157,9 @@ jobs:
 
           Confirm-ReleaseBinaryVersion `
             -ExecutablePath $executablePath `
+            -Version $env:RELEASE_VERSION
+          Confirm-ReleaseAssemblyVersion `
+            -AssemblyPath $assemblyPath `
             -Version $env:RELEASE_VERSION
           $null = New-ReleaseArtifacts `
             -ExecutablePath $executablePath `

@@ -43,7 +43,7 @@ The publish profile produces a framework-dependent, single-file
 
 ## Releases
 
-QuotaGlass uses Semantic Versioning and immutable annotated tags named
+QuotaGlass uses Semantic Versioning and immutable tags named
 `vMAJOR.MINOR.PATCH`. The tag is the source of truth for the binary version,
 artifact names, changelog entry, and GitHub Release.
 
@@ -59,10 +59,10 @@ To prepare a release:
 4. Run the `Release` workflow manually with the planned tag to validate the
    version, changelog, build, tests, package, and checksum without creating a
    tag or GitHub Release.
-5. Create and push the annotated tag from the validated commit:
+5. Create and push the tag from the validated commit:
 
    ```powershell
-   git tag -a v0.1.0 -m "release: v0.1.0"
+   git tag v0.1.0
    git push origin v0.1.0
    ```
 
