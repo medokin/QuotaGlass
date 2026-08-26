@@ -83,10 +83,11 @@ permissions. Normal pushes explicitly target `master`.
 For feature and maintenance pushes, Release Please creates or updates the
 release pull request. No publication jobs run.
 
-After a maintainer merges the release pull request, Release Please creates an
-immutable `vMAJOR.MINOR.PATCH` tag and a draft GitHub Release. Draft release
-creation and forced tag creation ensure a failed build never exposes an
-assetless public release and provide a stable recovery target.
+After a maintainer merges the release pull request, Release Please creates a
+`vMAJOR.MINOR.PATCH` tag and a draft GitHub Release. Draft release creation and
+forced tag creation ensure a failed build never exposes an assetless public
+release and provide an explicit recovery target whose SHA the workflow
+revalidates.
 
 The job normalizes the action outputs into explicit job outputs:
 
@@ -98,7 +99,7 @@ The job normalizes the action outputs into explicit job outputs:
 A manual recovery run accepts a tag for an existing draft Release Please
 release. It checks out `master`, confirms that the tag matches the root version
 in `.release-please-manifest.json`, confirms that the GitHub Release is still a
-draft, and resolves the immutable tagged commit. It does not ask Release Please
+draft, and resolves the tagged commit. It does not ask Release Please
 to create another release.
 
 ### Windows Package Job

@@ -63,8 +63,8 @@ request code.
    `version.txt`, and the generated `CHANGELOG.md`.
 4. A maintainer reviews the proposed version and user-facing changelog, obtains
    the required approval, and squash merges the release pull request.
-5. The merge reruns `Release Please`. It creates an immutable `vX.Y.Z` tag and
-   a draft GitHub Release.
+5. The merge reruns `Release Please`. It creates a `vX.Y.Z` tag and a draft
+   GitHub Release.
 6. The workflow checks out the tagged commit on `windows-latest`, restores,
    builds, tests, and publishes QuotaGlass with the release version stamped into
    the assembly and executable metadata.
@@ -78,7 +78,8 @@ request code.
    candidate. Record results without credentials, account data, or live usage
    data.
 9. Approve the protected `release` environment after acceptance. The final job
-   attaches the verified assets and publishes the draft GitHub Release.
+   attaches the verified assets and publishes the draft GitHub Release, at
+   which point release immutability locks the tag and assets.
 
 The ZIP contains only `QuotaGlass.exe`. The checksum file hashes the ZIP and
 uses this format:

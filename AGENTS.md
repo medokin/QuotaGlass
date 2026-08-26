@@ -26,9 +26,39 @@ Use four-space indentation in C# and preserve the existing XAML formatting. Null
 
 Tests use xUnit. Name test classes after the subject, such as `StatusPollerTests`, and methods as `Member_ExpectedBehavior` or `Member_Condition_ExpectedBehavior`. Add regression coverage for behavior changes and fixture-based tests for provider parsing. Run the full Release suite; UI tests may require a Windows desktop/STA context. Follow `docs/manual-test-checklist.md` for release candidates.
 
-## Commit & Pull Request Guidelines
+## Commit, Pull Request & Release Guidelines
 
-Use Conventional Commits matching repository history, for example `fix(core): prevent overlapping polls` or `test(ui): cover overlay placement`. Keep commits focused. Pull requests should explain the user-visible outcome, link relevant issues, list verification commands, and include screenshots for UI changes. Ensure build, tests, publish validation, and the CI Gitleaks scan pass.
+Use Conventional Commits for commits and pull request titles, for example
+`fix(core): prevent overlapping polls` or `test(ui): cover overlay placement`.
+Keep commits focused. Pull requests are squash merged, and the pull request
+title becomes the Conventional Commit message consumed by Release Please. Keep
+the title accurate through merge and use only the configured types: `feat`,
+`fix`, `docs`, `style`, `refactor`, `test`, `chore`, `perf`, `ci`, and `build`.
+
+Version effects are:
+
+- `fix` increments the patch version.
+- `feat` increments the minor version.
+- `!` in the title or a `BREAKING CHANGE:` footer increments the major version.
+- Below `1.0.0`, a breaking change increments the minor version instead.
+- `docs`, `style`, `refactor`, `test`, `chore`, `perf`, `ci`, and `build` do not
+  trigger a release by themselves.
+
+Prefer `!` in the title for breaking changes. When using a `BREAKING CHANGE:`
+footer, keep it in the pull request body because that body becomes the squash
+commit body. Do not use `Release-As:` or `BEGIN_COMMIT_OVERRIDE` directives.
+
+Pull requests should explain the user-visible outcome, link relevant issues,
+list verification commands, and include screenshots for UI changes. Ensure
+build, tests, publish validation, pull request title validation, and the CI
+Gitleaks scan pass.
+
+Release Please owns `.release-please-manifest.json`, `version.txt`, generated
+`CHANGELOG.md`, version tags, and GitHub Releases during normal release work.
+Do not manually create or edit those release outputs. Review and squash merge
+the generated release pull request as the human approval gate. Follow
+`docs/release-process.md` for the complete contributor, release, recovery, and
+repository-settings flow.
 
 ## Security & Configuration
 
