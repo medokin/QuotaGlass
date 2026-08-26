@@ -35,7 +35,7 @@ then run:
 dotnet restore AiStatus.slnx
 dotnet build AiStatus.slnx -c Release --no-restore
 dotnet test AiStatus.slnx -c Release --no-build
-dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64 --no-restore
+dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64
 ```
 
 The publish profile produces a framework-dependent, single-file

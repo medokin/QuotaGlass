@@ -67,7 +67,7 @@ jobs:
         run: dotnet test AiStatus.slnx -c Release --no-build
 
       - name: Publish
-        run: dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64 --no-restore -o artifacts/QuotaGlass-win-x64
+        run: dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64 -o artifacts/QuotaGlass-win-x64
 
       - name: Verify published artifact
         shell: pwsh
