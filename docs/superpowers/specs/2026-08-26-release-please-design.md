@@ -11,7 +11,7 @@ GitHub Release and its Windows artifacts.
 ## Starting Point
 
 The implementation branch starts from the current `origin/master` commit
-`c55c60538e6166bf532638c39020a19f3b460124`. This full commit ID is the Release
+`f296126828d463660a9ab24bbe53adae3ecacf37`. This full commit ID is the Release
 Please bootstrap boundary, so only commits after it contribute to the first
 generated release.
 

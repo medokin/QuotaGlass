@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work only on `codex/release-please`, based on `c55c60538e6166bf532638c39020a19f3b460124` from `origin/master`.
+- Work only on `codex/release-please`, based on `f296126828d463660a9ab24bbe53adae3ecacf37` from `origin/master`.
 - Do not modify, close, merge, or depend on pull request #4 or `codex/release-management`.
 - Do not create `CHANGELOG.md`; Release Please must create it in the generated release pull request.
 - Tags use exact names `vMAJOR.MINOR.PATCH` without a component prefix.
@@ -34,7 +34,7 @@
 - Create: `version.txt`
 
 **Interfaces:**
-- Consumes: default branch name `master` and bootstrap commit `c55c60538e6166bf532638c39020a19f3b460124`
+- Consumes: default branch name `master` and bootstrap commit `f296126828d463660a9ab24bbe53adae3ecacf37`
 - Produces: a root Release Please package named `QuotaGlass`, initial version `0.0.0`, `vX.Y.Z` tags, draft releases, and semantic release pull request titles
 
 - [ ] **Step 1: Record the failing bootstrap assertions**
@@ -243,7 +243,7 @@ git commit -m "docs(release): document release please operations" -m "Created wi
 - Modify only files already listed if verification or review finds defects
 
 **Interfaces:**
-- Consumes: all changes since `c55c60538e6166bf532638c39020a19f3b460124`
+- Consumes: all changes since `f296126828d463660a9ab24bbe53adae3ecacf37`
 - Produces: pushed branch `codex/release-please` and an independent draft GitHub pull request
 
 - [ ] **Step 1: Run full verification from a clean state**
