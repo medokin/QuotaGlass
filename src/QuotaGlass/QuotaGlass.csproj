@@ -8,6 +8,7 @@
     <Product>QuotaGlass</Product>
     <Description>Windows tray monitor for Claude, Codex, and Ollama usage.</Description>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <ApplicationIcon>..\..\assets\branding\quotaglass.ico</ApplicationIcon>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
