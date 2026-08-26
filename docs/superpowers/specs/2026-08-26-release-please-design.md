@@ -164,6 +164,7 @@ The following settings are prerequisites and are documented as manual setup:
 5. Keep default workflow permissions read-only. The workflows request narrower
    job-level write permissions where required.
 6. Create a protected `release` environment with a required human reviewer.
+7. Enable repository release immutability before the first publication.
 
 Bot-created Release Please pull request workflow runs may require maintainer
 approval under GitHub's current token policy. The documentation explains this
@@ -180,6 +181,8 @@ workflows on bot-created pull requests.
 - A release remains a draft until the exact Windows candidate is verified.
 - Published tags and releases are immutable. Corrections use a new patch
   release.
+- Finalization binds the draft release and tag to the exact packaged commit SHA
+  and verifies GitHub's immutable state after publication.
 - Asset reconciliation verifies content and never uses a clobber option.
 - Recovery only accepts the manifest's current version and an existing draft
   release.

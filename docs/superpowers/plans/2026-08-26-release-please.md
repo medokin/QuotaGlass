@@ -182,7 +182,9 @@ Download the package with `actions/download-artifact` pinned to
 For each expected file, upload it when absent. When present, download it to a
 temporary directory and compare SHA256 with the local candidate. Fail on a
 mismatch without clobbering. Require the remote asset names to equal the ZIP
-and checksum names, verify the checksum again, then publish the draft release.
+and checksum names, require the tag and draft target to equal the packaged SHA,
+verify repository release immutability, then publish the draft release and
+confirm its immutable state.
 
 - [ ] **Step 5: Validate and rehearse the workflow locally**
 
@@ -213,8 +215,8 @@ git commit -m "ci(release): publish verified windows artifacts" -m "Created with
 Document Conventional Commit version rules, squash behavior, release pull
 request approval, bot-created workflow approval behavior, Windows artifact and
 checksum formats, manual acceptance before approving the protected release
-environment named `release`, draft recovery, immutable releases, and all required
-GitHub settings. State that
+environment named `release`, draft recovery, immutable releases, the required
+release immutability setting, and all other GitHub settings. State that
 a PAT is unnecessary for normal publication and that a GitHub App or token is
 optional only for unattended extra workflows. Explain independence from pull
 request #4's older design.

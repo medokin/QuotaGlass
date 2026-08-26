@@ -69,7 +69,7 @@ jobs:
           release_json="$(
             gh release view "${INPUT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --json isDraft,tagName
+              --json isDraft,tagName,targetCommitish
           )"
           if [[ "$(jq -r '.isDraft' <<<"${release_json}")" != 'true' ]]; then
             echo "Release ${INPUT_TAG} is not a draft." >&2
@@ -80,7 +80,21 @@ jobs:
             exit 1
           fi
 
-          release_sha="$(git rev-parse "${INPUT_TAG}^{commit}")"
+          release_target="$(jq -r '.targetCommitish' <<<"${release_json}")"
+          tag_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${INPUT_TAG}" \
+              --jq '.object.sha'
+          )"
+          if [[ "${tag_sha}" != "${release_target}" ]]; then
+            echo "Release tag ${INPUT_TAG} moved from ${release_target} to ${tag_sha}." >&2
+            exit 1
+          fi
+
+          release_sha="$(git rev-parse "${release_target}^{commit}")"
+          if [[ "${release_sha}" != "${release_target}" ]]; then
+            echo "Release target ${release_target} is not a commit SHA." >&2
+            exit 1
+          fi
           if ! git merge-base --is-ancestor "${release_sha}" origin/master; then
             echo "Release tag ${INPUT_TAG} is not contained in master." >&2
             exit 1
@@ -289,6 +303,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
+      RELEASE_SHA: ${{ needs.release_please.outputs.sha }}
     steps:
       - name: Download release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -316,15 +331,40 @@ jobs:
         run: |
           set -euo pipefail
 
+          immutable_releases="$(
+            gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" \
+              --jq '.enabled'
+          )"
+          if [[ "${immutable_releases}" != 'true' ]]; then
+            echo 'Repository release immutability must be enabled before publication.' >&2
+            exit 1
+          fi
+
+          verify_release_target() {
+            local release_target
+            local tag_sha
+            release_target="$(jq -r '.targetCommitish' <<<"${release_json}")"
+            tag_sha="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+                --jq '.object.sha'
+            )"
+            if [[ "${release_target}" != "${RELEASE_SHA}" || \
+                  "${tag_sha}" != "${RELEASE_SHA}" ]]; then
+              echo "Release target ${release_target} and tag target ${tag_sha} must equal packaged SHA ${RELEASE_SHA}." >&2
+              exit 1
+            fi
+          }
+
           release_json="$(
             gh release view "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --json assets,isDraft,tagName
+              --json assets,isDraft,tagName,targetCommitish
           )"
           if [[ "$(jq -r '.isDraft' <<<"${release_json}")" != 'true' ]]; then
             echo "Release ${RELEASE_TAG} is not a draft." >&2
             exit 1
           fi
+          verify_release_target
 
           archive="QuotaGlass-${RELEASE_TAG}-win-x64.zip"
           checksum="QuotaGlass-${RELEASE_TAG}-win-x64.sha256"
@@ -353,11 +393,19 @@ jobs:
             fi
           done
 
-          mapfile -t actual_assets < <(
+          release_json="$(
             gh release view "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --json assets \
-              --jq '.assets[].name' | LC_ALL=C sort
+              --json assets,isDraft,tagName,targetCommitish
+          )"
+          if [[ "$(jq -r '.isDraft' <<<"${release_json}")" != 'true' ]]; then
+            echo "Release ${RELEASE_TAG} is no longer a draft." >&2
+            exit 1
+          fi
+          verify_release_target
+
+          mapfile -t actual_assets < <(
+            jq -r '.assets[].name' <<<"${release_json}" | LC_ALL=C sort
           )
           mapfile -t expected_assets < <(
             printf '%s\n' "${archive}" "${checksum}" | LC_ALL=C sort
@@ -370,3 +418,15 @@ jobs:
           gh release edit "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false
+
+          release_json="$(
+            gh release view "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json isDraft,isImmutable,tagName,targetCommitish
+          )"
+          verify_release_target
+          if [[ "$(jq -r '.isDraft' <<<"${release_json}")" != 'false' || \
+                "$(jq -r '.isImmutable' <<<"${release_json}")" != 'true' ]]; then
+            echo "Release ${RELEASE_TAG} was not published immutably." >&2
+            exit 1
+          fi

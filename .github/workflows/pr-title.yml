@@ -34,10 +34,10 @@ jobs:
             perf
             ci
             build
-          subjectPattern: '^[a-z0-9](?:.*[^.])?$'
+          subjectPattern: '^(?!.*[A-Z])[a-z0-9](?:.*[^.])?$'
           subjectPatternError: >-
-            The subject "{subject}" in "{title}" must start with a lowercase
-            letter or number and must not end with a period.
+            The subject "{subject}" in "{title}" must be lowercase, start with
+            a letter or number, and must not end with a period.
 
       - name: Reject Release Please overrides
         shell: bash
