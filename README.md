@@ -1,4 +1,8 @@
-# QuotaGlass
+<p align="center">
+  <img src="assets/branding/quotaglass-logo.svg" alt="QuotaGlass logo" width="160">
+</p>
+
+<h1 align="center">QuotaGlass</h1>
 
 QuotaGlass is a Windows tray application that shows Claude, Codex, and Ollama
 status at a glance. It displays current usage windows in a tray popup, can keep

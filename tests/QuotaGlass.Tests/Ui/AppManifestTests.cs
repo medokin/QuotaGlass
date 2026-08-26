@@ -6,6 +6,31 @@ namespace QuotaGlass.Tests.Ui;
 public sealed class AppManifestTests
 {
     private const uint LoadLibraryAsDataFile = 0x00000002;
+    private const int ApplicationIconResourceId = 32512;
+    private const int GroupIconResourceType = 14;
+
+    [Fact]
+    public void BuiltExecutable_ContainsApplicationIcon()
+    {
+        // Break caught: the branded icon is generated but not embedded in the Windows executable.
+        string executable = Path.Combine(AppContext.BaseDirectory, "QuotaGlass.exe");
+        Assert.True(File.Exists(executable), $"Application executable not found: {executable}");
+        IntPtr module = NativeMethods.LoadLibraryEx(executable, IntPtr.Zero, LoadLibraryAsDataFile);
+        Assert.NotEqual(IntPtr.Zero, module);
+        try
+        {
+            IntPtr resource = NativeMethods.FindResource(
+                module,
+                new IntPtr(ApplicationIconResourceId),
+                new IntPtr(GroupIconResourceType));
+
+            Assert.NotEqual(IntPtr.Zero, resource);
+        }
+        finally
+        {
+            NativeMethods.FreeLibrary(module);
+        }
+    }
 
     [Fact]
     public void BuiltExecutable_DeclaresPerMonitorV2DpiAwareness()
