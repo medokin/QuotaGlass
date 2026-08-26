@@ -1,0 +1,51 @@
+name: Pull request title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate Conventional Commit title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            test
+            chore
+            perf
+            ci
+            build
+          subjectPattern: '^[a-z0-9](?:.*[^.])?$'
+          subjectPatternError: >-
+            The subject "{subject}" in "{title}" must start with a lowercase
+            letter or number and must not end with a period.
+
+      - name: Reject Release Please overrides
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s\n' "${PR_BODY}" | grep -Eiq \
+            '^[[:space:]]*(Release-As:|BEGIN_COMMIT_OVERRIDE)'; then
+            echo 'Pull request bodies must not override Release Please versioning or commits.' >&2
+            exit 1
+          fi
