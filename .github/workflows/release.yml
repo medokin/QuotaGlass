@@ -161,6 +161,9 @@ jobs:
             -ExecutablePath $executablePath `
             -OutputDirectory artifacts/release `
             -Tag $env:RELEASE_TAG
+          [IO.File]::Copy(
+            'artifacts/release-notes.md',
+            'artifacts/release/release-notes.md')
 
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -169,7 +172,7 @@ jobs:
           path: |
             artifacts/release/${{ steps.metadata.outputs.release-archive-name }}
             artifacts/release/${{ steps.metadata.outputs.checksum-name }}
-            artifacts/release-notes.md
+            artifacts/release/release-notes.md
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
