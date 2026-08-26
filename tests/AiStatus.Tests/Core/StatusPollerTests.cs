@@ -497,6 +497,7 @@ public sealed class StatusPollerTests : IDisposable
 
         Assert.Null(observed);
         Assert.Same(result, poller.Current);
+        await context.Posted.WaitAsync(TimeSpan.FromSeconds(1));
         Assert.Equal(1, context.PendingCount);
         context.RunOne();
         Assert.Same(result, observed);
@@ -808,10 +809,17 @@ public sealed class StatusPollerTests : IDisposable
     private sealed class QueuedSynchronizationContext : SynchronizationContext
     {
         private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _callbacks = new();
+        private readonly TaskCompletionSource _posted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int PendingCount => _callbacks.Count;
 
-        public override void Post(SendOrPostCallback d, object? state) => _callbacks.Enqueue((d, state));
+        public Task Posted => _posted.Task;
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _callbacks.Enqueue((d, state));
+            _posted.TrySetResult();
+        }
 
         public void RunOne()
         {
