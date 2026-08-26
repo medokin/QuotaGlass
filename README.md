@@ -41,6 +41,38 @@ dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win
 The publish profile produces a framework-dependent, single-file
 `QuotaGlass.exe` for Windows x64.
 
+## Releases
+
+QuotaGlass uses Semantic Versioning and immutable annotated tags named
+`vMAJOR.MINOR.PATCH`. The tag is the source of truth for the binary version,
+artifact names, changelog entry, and GitHub Release.
+
+To prepare a release:
+
+1. Move the relevant entries in [`CHANGELOG.md`](CHANGELOG.md) from
+   `Unreleased` to `## [MAJOR.MINOR.PATCH] - YYYY-MM-DD`. Use the UTC date on
+   which the release workflow will first run, then recreate the empty
+   `Unreleased` section and update the comparison links.
+2. Complete [`docs/manual-test-checklist.md`](docs/manual-test-checklist.md)
+   against the release candidate.
+3. Merge the release commit to `master`.
+4. Run the `Release` workflow manually with the planned tag to validate the
+   version, changelog, build, tests, package, and checksum without creating a
+   tag or GitHub Release.
+5. Create and push the annotated tag from the validated commit:
+
+   ```powershell
+   git tag -a v0.1.0 -m "release: v0.1.0"
+   git push origin v0.1.0
+   ```
+
+The tag-triggered workflow repeats all validation and publishes the matching
+GitHub Release. It uses that version's changelog section as the release notes
+and attaches the versioned Windows x64 ZIP and SHA-256 manifest.
+
+Never move or reuse a published release tag. Release corrections under a new
+patch version.
+
 ## Configuration
 
 QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The
