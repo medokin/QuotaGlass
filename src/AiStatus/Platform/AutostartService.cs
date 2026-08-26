@@ -34,7 +34,7 @@ internal sealed class RegistryRunKey : IRunKey
 
 public sealed class AutostartService
 {
-    internal const string ValueName = "AI Status";
+    internal const string ValueName = "QuotaGlass";
     private readonly IRunKey _runKey;
     private readonly string _command;
 

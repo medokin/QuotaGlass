@@ -2,6 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <AssemblyName>QuotaGlass</AssemblyName>
+    <RootNamespace>AiStatus</RootNamespace>
+    <AssemblyTitle>QuotaGlass</AssemblyTitle>
+    <Product>QuotaGlass</Product>
+    <Description>Windows tray monitor for Claude, Codex, and Ollama usage.</Description>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>

@@ -300,7 +300,7 @@ internal sealed class OwnedHotkeyRegistration : IHotkeyRegistration
 
     public OwnedHotkeyRegistration(string chord, RollingFileLog log)
     {
-        _source = new HwndSource(new HwndSourceParameters("AI Status Hotkey")
+        _source = new HwndSource(new HwndSourceParameters("QuotaGlass Hotkey")
         {
             Width = 0,
             Height = 0,

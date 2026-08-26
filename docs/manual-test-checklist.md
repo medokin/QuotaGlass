@@ -1,4 +1,4 @@
-# AI Status Release Acceptance Checklist
+# QuotaGlass Release Acceptance Checklist
 
 Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL`, or `NOT EXERCISED` in every Status cell. Evidence must name the exact command, observation, or screenshot path. `NOT EXERCISED` requires a concrete environmental reason and should cite automated coverage when available. Never paste credentials, tokens, headers, response bodies, account identifiers, user identifiers, email addresses, or live usage data into this document or screenshots committed to the repository.
 
@@ -39,9 +39,9 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | OVERLAY-07 | While typing in another application, showing or updating the overlay does not move focus or interrupt input. | NOT EXERCISED | Focus probe could not continue after an unrelated Windows Security dialog blocked the desktop; safety guidance required stopping. | No focus result is claimed. |
 | HOTKEY-01 | `Ctrl+Alt+A` toggles the overlay. | NOT EXERCISED | The supported key-input path could not continue after the desktop became blocked. `GlobalHotkeyTests.WindowMessage_ForRegisteredHotkeyRaisesPressed` passed. | No Windows-key shortcut was used. |
 | HOTKEY-02 | If another process owns the hotkey, registration failure is graceful and the application remains usable. | NOT EXERCISED | No controlled competing hotkey owner was available before the desktop became blocked. `GlobalHotkeyTests.Constructor_RegistrationFailureIsLoggedWithoutThrowing` passed. | Automated coverage is not proof of real shell contention. |
-| AUTOSTART-01 | Enabling Start with Windows adds only the `AI Status` value with the quoted executable path. | PASS | Production `AutostartService` added an exact quoted `REG_SZ`; all other Run value names were unchanged. | The prior value was absent and was snapshotted before the check. |
-| AUTOSTART-02 | An external change to the `AI Status` Run value is reflected by the menu state. | NOT EXERCISED | Production `AutostartService.IsEnabled` immediately reflected an external value change and correction; the blocked desktop prevented opening the menu. | Backend live-read behavior passed; actual menu rendering remains unverified. |
-| AUTOSTART-03 | Disabling Start with Windows removes only the `AI Status` value. | PASS | Production `AutostartService` removed the named value; all other Run value names were unchanged; the prior absent state was restored. | No unrelated registry value was modified. |
+| AUTOSTART-01 | Enabling Start with Windows adds only the `QuotaGlass` value with the quoted executable path. | PASS | Production `AutostartService` added an exact quoted `REG_SZ`; all other Run value names were unchanged. | The prior value was absent and was snapshotted before the check. |
+| AUTOSTART-02 | An external change to the `QuotaGlass` Run value is reflected by the menu state. | NOT EXERCISED | Production `AutostartService.IsEnabled` immediately reflected an external value change and correction; the blocked desktop prevented opening the menu. | Backend live-read behavior passed; actual menu rendering remains unverified. |
+| AUTOSTART-03 | Disabling Start with Windows removes only the `QuotaGlass` value. | PASS | Production `AutostartService` removed the named value; all other Run value names were unchanged; the prior absent state was restored. | No unrelated registry value was modified. |
 | POLL-01 | Refresh now starts a new poll without waiting for the normal timer. | NOT EXERCISED | Tray command was inaccessible. `StatusPollerTests.RequestRefresh_WakesRunLoopBeforeTimerTick` and `RequestRefresh_PerformsOnePoll` passed. | No runtime timing evidence was available. |
 | POLL-02 | Normal polling cadence is 60 seconds. | NOT EXERCISED | The real app run could not be observed for a complete cadence. `StatusPollerTests.SetReducedCadence_RecreatesTimerUsingCurrentSettings` passed with documented defaults. | Automated timer coverage is not a wall-clock shell observation. |
 | POLL-03 | Session lock changes polling cadence to the five-minute backoff. | NOT EXERCISED | Locking the automation-controlled workstation was prohibited because it would sever control. `ActivityStateMonitorTests.IsReducedCadence_IsTrueWhileSessionIsLocked` passed. | No workstation lock was attempted. |
@@ -65,9 +65,9 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 
 | Check | Status | Evidence | Notes |
 |---|---|---|---|
-| `dotnet test AiStatus.slnx -c Release` | PASS | 231 passed, 0 failed, 0 skipped. | Release configuration. |
+| `dotnet test AiStatus.slnx -c Release` | PASS | 257 passed, 0 failed, 0 skipped. | Release configuration. |
 | `dotnet publish src/AiStatus/AiStatus.csproj -p:PublishProfile=win-x64` | PASS | Publish exited 0. | Framework-dependent single-file profile. |
-| Published artifact inventory | PASS | `AiStatus.exe`, 25,918,315 bytes; no other files. | Inventory taken from the profile publish directory. |
+| Published artifact inventory | PASS | `QuotaGlass.exe`, 25,922,423 bytes; no other files. | Inventory taken from the profile publish directory. |
 | Fixture security test | PASS | Focused Release run: 1 passed, 0 failed; all 6 fixture files scanned. | No matched fixture content was printed. |
 | `dotnet build AiStatus.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
 | `git diff --check` | PASS | Exit 0 with no output. | Run before commit. |

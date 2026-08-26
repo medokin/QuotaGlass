@@ -17,3 +17,17 @@ publish/
 # Local runtime state (never commit: may contain account identifiers)
 log.txt
 settings.local.json
+
+# Credentials and local environment files
+.env
+.env.*
+!.env.example
+auth.json
+.credentials.json
+credentials.json
+secrets.json
+*.secrets.json
+*.key
+*.pem
+*.pfx
+*.p12

@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan Git history
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  build:
+    name: Build, test, and publish
+    runs-on: windows-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore AiStatus.slnx
+
+      - name: Build
+        run: dotnet build AiStatus.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test AiStatus.slnx -c Release --no-build
+
+      - name: Publish
+        run: dotnet publish src/AiStatus/AiStatus.csproj -c Release -p:PublishProfile=win-x64 --no-restore -o artifacts/QuotaGlass-win-x64
+
+      - name: Verify published artifact
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath artifacts/QuotaGlass-win-x64 -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'QuotaGlass.exe') {
+            throw "Expected only QuotaGlass.exe, found: $($files.Name -join ', ')"
+          }
+
+      - name: Upload application
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: QuotaGlass-win-x64
+          path: artifacts/QuotaGlass-win-x64/QuotaGlass.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

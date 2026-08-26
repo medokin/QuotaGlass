@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:AiStatus.Ui.Controls"
         xmlns:ui="clr-namespace:AiStatus.Ui"
-        Title="AI status overlay"
+        Title="QuotaGlass overlay"
         MinWidth="340"
         MaxWidth="420"
         AllowsTransparency="True"

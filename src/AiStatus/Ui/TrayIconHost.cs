@@ -234,7 +234,7 @@ internal sealed class WinFormsTrayIconView : ITrayIconView
         _menu.Opening += OnMenuOpening;
         _notifyIcon.ContextMenuStrip = _menu;
         _notifyIcon.MouseClick += OnMouseClick;
-        _notifyIcon.Text = "AI Status";
+        _notifyIcon.Text = "QuotaGlass";
         State = TrayState.Grey;
     }
 

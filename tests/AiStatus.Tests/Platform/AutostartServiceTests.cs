@@ -16,12 +16,12 @@ public sealed class AutostartServiceTests
     public void IsEnabled_ReadsCurrentRunKeyValueEveryTime()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, @"C:\Program Files\AI Status\AiStatus.exe");
+        var service = new AutostartService(runKey, @"C:\Program Files\QuotaGlass\QuotaGlass.exe");
 
         runKey.Value = null;
         Assert.False(service.IsEnabled);
 
-        runKey.Value = "\"C:\\Program Files\\AI Status\\AiStatus.exe\"";
+        runKey.Value = "\"C:\\Program Files\\QuotaGlass\\QuotaGlass.exe\"";
         Assert.True(service.IsEnabled);
         Assert.Equal(2, runKey.GetValueCalls);
     }
@@ -30,12 +30,12 @@ public sealed class AutostartServiceTests
     public void SetEnabled_TrueWritesQuotedExecutablePathUnderApplicationValue()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, @"C:\Program Files\AI Status\AiStatus.exe");
+        var service = new AutostartService(runKey, @"C:\Program Files\QuotaGlass\QuotaGlass.exe");
 
         service.SetEnabled(true);
 
-        Assert.Equal("AI Status", runKey.SetName);
-        Assert.Equal("\"C:\\Program Files\\AI Status\\AiStatus.exe\"", runKey.SetValueText);
+        Assert.Equal("QuotaGlass", runKey.SetName);
+        Assert.Equal("\"C:\\Program Files\\QuotaGlass\\QuotaGlass.exe\"", runKey.SetValueText);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public sealed class AutostartServiceTests
 
         service.SetEnabled(false);
 
-        Assert.Equal("AI Status", runKey.DeletedName);
+        Assert.Equal("QuotaGlass", runKey.DeletedName);
         Assert.Null(runKey.SetName);
     }
 
@@ -71,7 +71,7 @@ public sealed class AutostartServiceTests
 
         public string? GetValue(string name)
         {
-            Assert.Equal("AI Status", name);
+            Assert.Equal("QuotaGlass", name);
             GetValueCalls++;
             return Value;
         }
