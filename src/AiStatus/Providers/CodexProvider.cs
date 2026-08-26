@@ -47,48 +47,40 @@ public sealed class CodexProvider : IStatusProvider
     public string Label => "Codex";
 
     internal static Stream OpenCredentialStream(string credentialPath) =>
-        new FileStream(credentialPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, FileOptions.SequentialScan);
+        new FileStream(
+            credentialPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 1,
+            FileOptions.SequentialScan);
 
     public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
-
-        try
+        Credential credential = ReadCredential();
+        using var client = new HttpClient(_handler, disposeHandler: false);
+        using HttpResponseMessage response = await SendAsync(client, credential, cancellationToken)
+            .ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            Credential credential = ReadCredential();
-            using var client = new HttpClient(_handler, disposeHandler: false);
-            using HttpResponseMessage response = await SendAsync(client, credential, cancellationToken);
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            {
-                return Snapshot(HealthState.AuthExpired, null, [], "re-auth: run codex login", fetchedAt);
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return Snapshot(HealthState.Degraded, null, [], "Codex usage request failed", fetchedAt);
-            }
-
-            if (!IsJson(response))
-            {
-                return Snapshot(HealthState.Degraded, null, [], "Codex usage endpoint returned non-JSON content", fetchedAt);
-            }
-
-            using JsonDocument usage = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
-            return Snapshot(
-                HealthState.Ok,
-                TryGetString(usage.RootElement, "plan_type"),
-                ReadWindows(usage.RootElement),
-                null,
-                fetchedAt);
+            return Snapshot(HealthState.AuthExpired, null, [], "re-auth: run codex login", fetchedAt);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+
+        response.EnsureSuccessStatusCode();
+        if (!IsJson(response))
         {
-            throw;
+            return Snapshot(HealthState.Degraded, null, [], "Codex usage endpoint returned non-JSON content", fetchedAt);
         }
-        catch (Exception)
-        {
-            return Snapshot(HealthState.Degraded, null, [], "Codex status could not be read", fetchedAt);
-        }
+
+        using JsonDocument usage = JsonDocument.Parse(
+            await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
+        return Snapshot(
+            HealthState.Ok,
+            TryGetString(usage.RootElement, "plan_type"),
+            ReadWindows(usage.RootElement),
+            null,
+            fetchedAt);
     }
 
     private Credential ReadCredential()
@@ -106,7 +98,7 @@ public sealed class CodexProvider : IStatusProvider
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
         request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
         request.Headers.Add("chatgpt-account-id", credential.AccountId);
-        return await client.SendAsync(request, cancellationToken);
+        return await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     private ImmutableArray<UsageWindow> ReadWindows(JsonElement root)

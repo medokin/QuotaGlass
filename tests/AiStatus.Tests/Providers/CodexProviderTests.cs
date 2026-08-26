@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using AiStatus.Model;
 using AiStatus.Providers;
 using AiStatus.Tests.Support;
@@ -159,7 +160,7 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_RejectsCredentialFieldsOutsideTokensObject()
+    public async Task FetchAsync_RejectsCredentialFieldsOutsideTokensObjectWithOperationalFailure()
     {
         // Catches a scanner that accepts access credentials from an object other than /tokens.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
@@ -174,10 +175,66 @@ public sealed class CodexProviderTests : IDisposable
             handler,
             percent => SeverityPolicy.FromPercent(percent, 80, 95));
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public void OpenCredentialStream_AllowsConcurrentTokenRotation()
+    {
+        // Break caught: a long credential read blocks Codex CLI token replacement or rewrite.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile("auth.json", "{}");
+        string rotatedPath = Path.Combine(directory.Path, "auth.previous.json");
+
+        using Stream reader = CodexProvider.OpenCredentialStream(credentialPath);
+        using (new FileStream(
+            credentialPath,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+        }
+
+        File.Move(credentialPath, rotatedPath);
+
+        Assert.True(File.Exists(rotatedPath));
+    }
+
+    [Fact]
+    public async Task FetchAsync_UsageServerFailureThrowsOperationalFailure()
+    {
+        // Break caught: a transient Codex endpoint failure is returned as a successful empty snapshot.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway));
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchAsync_TruncatedUsageJsonThrowsOperationalFailure()
+    {
+        // Break caught: truncated Codex JSON bypasses the poller's last-good retention boundary.
+        var handler = new StubHttpMessageHandler(_ => JsonResponse("{\"rate_limit\":", "application/json"));
+
+        await Assert.ThrowsAnyAsync<JsonException>(
+            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchAsync_CallerCancellationPropagates()
+    {
+        // Break caught: provider cancellation is converted into a successful degraded snapshot.
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var handler = new StubHttpMessageHandler(_ =>
+            throw new OperationCanceledException(cancellation.Token));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => CreateProvider(handler).FetchAsync(cancellation.Token));
     }
 
     private CodexProvider CreateProvider(string fixtureName, string contentType) =>

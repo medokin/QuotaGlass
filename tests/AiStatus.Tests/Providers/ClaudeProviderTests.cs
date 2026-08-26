@@ -98,7 +98,7 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_NestedAccessTokenReturnsDegradedWithoutHttp()
+    public async Task FetchAsync_NestedAccessTokenThrowsWithoutHttp()
     {
         // Catches a reader that mistakes a nested descendant string for direct claudeAiOauth.accessToken.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
@@ -106,14 +106,14 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             "{\"claudeAiOauth\":{\"accessToken\":{\"nested\":\"unit-test-access-token\"},\"expiresAt\":0}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
     [Fact]
-    public async Task FetchAsync_ArrayExpiresAtReturnsDegradedWithoutHttp()
+    public async Task FetchAsync_ArrayExpiresAtThrowsWithoutHttp()
     {
         // Catches a reader that mistakes an array element for direct claudeAiOauth.expiresAt.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
@@ -121,14 +121,14 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":[0]}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
     [Fact]
-    public async Task FetchAsync_EmptyAccessTokenReturnsDegradedWithoutHttp()
+    public async Task FetchAsync_EmptyAccessTokenThrowsWithoutHttp()
     {
         // Catches a selective reader that accepts an empty direct access token.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
@@ -136,9 +136,9 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             "{\"claudeAiOauth\":{\"accessToken\":\"\",\"expiresAt\":0}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -158,7 +158,7 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_LeadingZeroExpiresAtReturnsDegradedWithoutHttp()
+    public async Task FetchAsync_LeadingZeroExpiresAtThrowsWithoutHttp()
     {
         // Catches a scanner that accepts a malformed direct JSON integer token.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
@@ -166,14 +166,14 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":00}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
     [Fact]
-    public async Task FetchAsync_UnknownValueNestedBeyond64LevelsReturnsDegradedWithoutHttp()
+    public async Task FetchAsync_UnknownValueNestedBeyond64LevelsThrowsWithoutHttp()
     {
         // Catches recursive unknown-value skipping that can overflow the stack on hostile credential JSON.
         string nested = new string('[', 65) + "null" + new string(']', 65);
@@ -182,9 +182,9 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             $"{{\"claudeAiOauth\":{{\"accessToken\":\"unit-test-access-token\",\"metadata\":{nested},\"expiresAt\":0}}}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -204,18 +204,41 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_MalformedCredentialDoesNotExposeItsToken()
+    public void OpenCredentialStream_AllowsConcurrentTokenRotation()
     {
-        // Catches a provider that lets a credential parse exception escape with authentication material.
+        // Break caught: a long credential read blocks the CLI from replacing or rewriting its own file.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile("credentials.json", "{}");
+        string rotatedPath = Path.Combine(directory.Path, "credentials.previous.json");
+
+        using Stream reader = ClaudeProvider.OpenCredentialStream(credentialPath);
+        using (new FileStream(
+            credentialPath,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+        }
+
+        File.Move(credentialPath, rotatedPath);
+
+        Assert.True(File.Exists(rotatedPath));
+    }
+
+    [Fact]
+    public async Task FetchAsync_MalformedCredentialThrowsSanitizedFailure()
+    {
+        // Catches an operational credential failure whose exception text exposes authentication material.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
         ClaudeProvider provider = CreateProviderWithCredential(
             handler,
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\"");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => provider.FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
-        Assert.DoesNotContain("unit-test-access-token", snapshot.Error ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("unit-test-access-token", exception.Message, StringComparison.Ordinal);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -283,7 +306,110 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_RequiresJsonContentType()
+    public async Task FetchAsync_ProfileAuthenticationFailurePreservesValidUsage()
+    {
+        // Break caught: profile authentication handling discards usage already mapped from a successful response.
+        var handler = new StubHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                ? JsonResponse(ReadFixture("claude-usage.json"))
+                : new HttpResponseMessage(HttpStatusCode.Unauthorized));
+
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.AuthExpired, snapshot.Health);
+        AssertUsageAndSpendPreserved(snapshot);
+        Assert.Equal("re-auth: run claude login", snapshot.Error);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ProfileCallerCancellationPropagates()
+    {
+        // Break caught: the ancillary profile boundary converts caller cancellation into a degraded snapshot.
+        using var cancellation = new CancellationTokenSource();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal))
+            {
+                return JsonResponse(ReadFixture("claude-usage.json"));
+            }
+
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => CreateProvider(handler).FetchAsync(cancellation.Token));
+    }
+
+    [Fact]
+    public async Task FetchAsync_ProfileServerFailurePreservesUsageAndCachedPlan()
+    {
+        // Break caught: an optional profile outage erases valid usage, spend, and the last known plan.
+        var time = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        int profileRequests = 0;
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (!request.RequestUri!.AbsolutePath.EndsWith("profile", StringComparison.Ordinal))
+            {
+                return JsonResponse(ReadFixture("claude-usage.json"));
+            }
+
+            return Interlocked.Increment(ref profileRequests) == 1
+                ? JsonResponse(ReadFixture("claude-profile.json"))
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        });
+        ClaudeProvider provider = CreateProvider(handler, timeProvider: time);
+        ProviderSnapshot first = await provider.FetchAsync(CancellationToken.None);
+        time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
+
+        ProviderSnapshot degraded = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Ok, first.Health);
+        Assert.Equal(HealthState.Degraded, degraded.Health);
+        Assert.Equal("team_standard", degraded.PlanLabel);
+        AssertUsageAndSpendPreserved(degraded);
+        Assert.Equal("Claude profile request failed", degraded.Error);
+    }
+
+    [Fact]
+    public async Task FetchAsync_NonJsonProfilePreservesUsageWithoutPlan()
+    {
+        // Break caught: a non-JSON optional profile response discards independently parsed quota data.
+        var handler = new StubHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                ? JsonResponse(ReadFixture("claude-usage.json"))
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<html>not JSON</html>", Encoding.UTF8, "text/html"),
+                });
+
+        ProviderSnapshot degraded = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, degraded.Health);
+        Assert.Null(degraded.PlanLabel);
+        AssertUsageAndSpendPreserved(degraded);
+        Assert.Equal("Claude profile response was not JSON", degraded.Error);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ProfileNetworkFailurePreservesUsageWithoutPlan()
+    {
+        // Break caught: a thrown ancillary profile transport error escapes and loses valid usage data.
+        var handler = new StubHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                ? JsonResponse(ReadFixture("claude-usage.json"))
+                : throw new HttpRequestException("synthetic profile failure"));
+
+        ProviderSnapshot degraded = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Degraded, degraded.Health);
+        Assert.Null(degraded.PlanLabel);
+        AssertUsageAndSpendPreserved(degraded);
+        Assert.Equal("Claude profile request failed", degraded.Error);
+    }
+
+    [Fact]
+    public async Task FetchAsync_NonJsonUsageResponseThrowsOperationalFailure()
     {
         // Catches a provider that attempts to parse an HTML success page as a usage response.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
@@ -291,10 +417,30 @@ public sealed class ClaudeProviderTests : IDisposable
             Content = new StringContent("<html>not JSON</html>", Encoding.UTF8, "text/html")
         });
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
-        Assert.DoesNotContain("unit-test-access-token", snapshot.Error ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("unit-test-access-token", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FetchAsync_UsageServerFailureThrowsOperationalFailure()
+    {
+        // Break caught: a transient usage endpoint failure is returned as a successful empty snapshot.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchAsync_TruncatedUsageJsonThrowsOperationalFailure()
+    {
+        // Break caught: truncated vendor JSON replaces valid retained usage with an empty degraded snapshot.
+        var handler = new StubHttpMessageHandler(_ => JsonResponse("{\"limits\":["));
+
+        await Assert.ThrowsAnyAsync<JsonException>(
+            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -326,7 +472,8 @@ public sealed class ClaudeProviderTests : IDisposable
     private ClaudeProvider CreateProvider(
         HttpMessageHandler handler,
         long? expiresAtUnixMilliseconds = null,
-        Func<double?, Severity>? severityFromPercent = null)
+        Func<double?, Severity>? severityFromPercent = null,
+        TimeProvider? timeProvider = null)
     {
         var directory = new TemporaryDirectory();
         _directories.Add(directory);
@@ -344,7 +491,8 @@ public sealed class ClaudeProviderTests : IDisposable
         return new ClaudeProvider(
             credentialPath,
             handler,
-            severityFromPercent ?? (percent => SeverityPolicy.FromPercent(percent, 80, 95)));
+            severityFromPercent ?? (percent => SeverityPolicy.FromPercent(percent, 80, 95)),
+            timeProvider);
     }
 
     private ClaudeProvider CreateProviderWithCredential(HttpMessageHandler handler, string credentialJson)
@@ -370,6 +518,17 @@ public sealed class ClaudeProviderTests : IDisposable
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
 
+    private static void AssertUsageAndSpendPreserved(ProviderSnapshot snapshot)
+    {
+        Assert.Collection(
+            snapshot.Windows,
+            session => Assert.Equal("session", session.Label),
+            weekly => Assert.Equal("weekly", weekly.Label));
+        Assert.Contains(
+            snapshot.Info,
+            line => line.Label == "Extra usage" && line.Value == "EUR 322.52 this cycle (no cap set)");
+    }
+
     private static string ReadFixture(string fileName) =>
         File.ReadAllText(Path.Combine(FindFixtureDirectory(), fileName));
 
@@ -393,6 +552,15 @@ public sealed class ClaudeProviderTests : IDisposable
         {
             directory.Dispose();
         }
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan amount) => _now += amount;
     }
 
     private sealed class SingleByteCredentialStream : Stream

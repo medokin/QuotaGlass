@@ -331,16 +331,19 @@ internal sealed class ApplicationShutdownCoordinator
     private readonly object _gate = new();
     private readonly CancellationTokenSource _applicationCancellation;
     private readonly Func<Task?> _getPollLoop;
+    private readonly Func<Task> _flushPositionPersistence;
     private readonly IUiDispatcher _dispatcher;
     private readonly Action _disposeOwnedResources;
     private readonly Action _shutdownApplication;
     private readonly RollingFileLog _log;
     private Task? _shutdownTask;
+    private Task? _positionFlushTask;
     private int _ownedResourcesDisposed;
 
     public ApplicationShutdownCoordinator(
         CancellationTokenSource applicationCancellation,
         Func<Task?> getPollLoop,
+        Func<Task> flushPositionPersistence,
         IUiDispatcher dispatcher,
         Action disposeOwnedResources,
         Action shutdownApplication,
@@ -348,6 +351,7 @@ internal sealed class ApplicationShutdownCoordinator
     {
         _applicationCancellation = applicationCancellation ?? throw new ArgumentNullException(nameof(applicationCancellation));
         _getPollLoop = getPollLoop ?? throw new ArgumentNullException(nameof(getPollLoop));
+        _flushPositionPersistence = flushPositionPersistence ?? throw new ArgumentNullException(nameof(flushPositionPersistence));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _disposeOwnedResources = disposeOwnedResources ?? throw new ArgumentNullException(nameof(disposeOwnedResources));
         _shutdownApplication = shutdownApplication ?? throw new ArgumentNullException(nameof(shutdownApplication));
@@ -365,6 +369,7 @@ internal sealed class ApplicationShutdownCoordinator
     public void ShutdownFallback()
     {
         CancelApplication();
+        ObservePositionFlushBestEffort(BeginPositionFlushOnce());
         DisposeOwnedResourcesOnce();
     }
 
@@ -387,6 +392,8 @@ internal sealed class ApplicationShutdownCoordinator
             }
         }
 
+        await FlushPositionPersistenceSafelyAsync().ConfigureAwait(false);
+
         try
         {
             await _dispatcher.InvokeAsync(() =>
@@ -399,6 +406,75 @@ internal sealed class ApplicationShutdownCoordinator
         {
             TryLogFailure(exception);
         }
+    }
+
+    private async Task FlushPositionPersistenceSafelyAsync()
+    {
+        try
+        {
+            await BeginPositionFlushOnce().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+        }
+    }
+
+    private Task BeginPositionFlushOnce()
+    {
+        lock (_gate)
+        {
+            if (_positionFlushTask is not null)
+            {
+                return _positionFlushTask;
+            }
+
+            try
+            {
+                _positionFlushTask = _flushPositionPersistence()
+                    ?? Task.FromException(new InvalidOperationException("Position persistence returned no task."));
+            }
+            catch (Exception exception)
+            {
+                _positionFlushTask = Task.FromException(exception);
+            }
+
+            return _positionFlushTask;
+        }
+    }
+
+    private void ObserveCompletedPositionFlush(Task flush)
+    {
+        if (!flush.IsCompleted)
+        {
+            return;
+        }
+
+        try
+        {
+            flush.GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            TryLogFailure(exception);
+        }
+    }
+
+    private void ObservePositionFlushBestEffort(Task flush)
+    {
+        if (flush.IsCompleted)
+        {
+            ObserveCompletedPositionFlush(flush);
+            return;
+        }
+
+        _ = flush.ContinueWith(
+            static (completed, state) =>
+                ((ApplicationShutdownCoordinator)state!).ObserveCompletedPositionFlush(completed),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private void CancelApplication()

@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -14,14 +13,11 @@ namespace AiStatus.Ui;
 
 public partial class OverlayWindow : Window, IOverlayStatusWindow
 {
-    private const int ExtendedStyleIndex = -20;
-    private const long NoActivateStyle = 0x08000000L;
-    private const long ToolWindowStyle = 0x00000080L;
-
     private readonly SettingsStore? _settingsStore;
     private readonly WindowPlacementService _placementService;
     private readonly OverlayPositionPersistence? _positionPersistence;
     private readonly OverlayDragState _dragState;
+    private readonly IOverlayExtendedStyle _extendedStyle;
     private Point _dragOffset;
 
     public OverlayWindow()
@@ -43,10 +39,20 @@ public partial class OverlayWindow : Window, IOverlayStatusWindow
         SettingsStore? settingsStore,
         WindowPlacementService placementService,
         OverlayDragState dragState)
+        : this(settingsStore, placementService, dragState, new OverlayExtendedStyle())
+    {
+    }
+
+    internal OverlayWindow(
+        SettingsStore? settingsStore,
+        WindowPlacementService placementService,
+        OverlayDragState dragState,
+        IOverlayExtendedStyle extendedStyle)
     {
         _settingsStore = settingsStore;
         _placementService = placementService ?? throw new ArgumentNullException(nameof(placementService));
         _dragState = dragState ?? throw new ArgumentNullException(nameof(dragState));
+        _extendedStyle = extendedStyle ?? throw new ArgumentNullException(nameof(extendedStyle));
         if (settingsStore is not null)
         {
             _positionPersistence = new OverlayPositionPersistence(settingsStore);
@@ -94,6 +100,9 @@ public partial class OverlayWindow : Window, IOverlayStatusWindow
         }
     }
 
+    internal Task FlushPositionPersistenceAsync(CancellationToken cancellationToken = default) =>
+        _positionPersistence?.FlushAsync(cancellationToken) ?? Task.CompletedTask;
+
     protected override void OnClosed(EventArgs args)
     {
         SourceInitialized -= OnSourceInitialized;
@@ -110,8 +119,16 @@ public partial class OverlayWindow : Window, IOverlayStatusWindow
     private void OnSourceInitialized(object? sender, EventArgs args)
     {
         IntPtr handle = new WindowInteropHelper(this).Handle;
-        long styles = NativeMethods.GetWindowLongPtr(handle, ExtendedStyleIndex).ToInt64();
-        NativeMethods.SetWindowLongPtr(handle, ExtendedStyleIndex, new IntPtr(styles | NoActivateStyle | ToolWindowStyle));
+        try
+        {
+            _extendedStyle.Apply(handle);
+        }
+        catch
+        {
+            IsHitTestVisible = false;
+            ShowActivated = false;
+            throw;
+        }
     }
 
     private async void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs args)
@@ -302,12 +319,4 @@ public partial class OverlayWindow : Window, IOverlayStatusWindow
         }
     }
 
-    private static class NativeMethods
-    {
-        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
-        internal static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
-
-        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
-        internal static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr newValue);
-    }
 }

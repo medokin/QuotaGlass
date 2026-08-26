@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using AiStatus.Core;
 
 namespace AiStatus.Ui;
@@ -12,7 +13,9 @@ internal sealed class OverlayPositionPersistence
     private readonly SettingsUpdate _updateSettings;
     private CustomOverlayPosition? _pending;
     private TaskCompletionSource? _batchCompletion;
+    private Exception? _lastFailure;
     private bool _running;
+    private bool _flushRequested;
 
     public OverlayPositionPersistence(SettingsStore store)
         : this(CreateUpdater(store))
@@ -24,7 +27,16 @@ internal sealed class OverlayPositionPersistence
         _updateSettings = updateSettings ?? throw new ArgumentNullException(nameof(updateSettings));
     }
 
-    public Exception? LastFailure { get; private set; }
+    public Exception? LastFailure
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastFailure;
+            }
+        }
+    }
 
     public event Action<object?, Exception>? Failed;
 
@@ -35,6 +47,11 @@ internal sealed class OverlayPositionPersistence
         Task batch;
         lock (_gate)
         {
+            if (_flushRequested)
+            {
+                return _batchCompletion?.Task ?? Task.CompletedTask;
+            }
+
             _pending = position;
             if (!_running)
             {
@@ -52,6 +69,23 @@ internal sealed class OverlayPositionPersistence
         }
 
         return batch;
+    }
+
+    public async Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        Task batch;
+        lock (_gate)
+        {
+            _flushRequested = true;
+            batch = _batchCompletion?.Task ?? Task.CompletedTask;
+        }
+
+        await batch.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Exception? failure = LastFailure;
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
     }
 
     private async Task RunPumpAsync()
@@ -75,7 +109,7 @@ internal sealed class OverlayPositionPersistence
                         OverlayPosition = new OverlayPosition(position.Position.X, position.Position.Y),
                     },
                     CancellationToken.None).ConfigureAwait(false);
-                LastFailure = null;
+                SetLastFailure(null);
             }
             catch (Exception exception)
             {
@@ -99,7 +133,7 @@ internal sealed class OverlayPositionPersistence
 
     private void ReportFailure(Exception exception)
     {
-        LastFailure = exception;
+        SetLastFailure(exception);
         Action<object?, Exception>? handlers = Failed;
         if (handlers is null)
         {
@@ -115,6 +149,14 @@ internal sealed class OverlayPositionPersistence
             catch (Exception)
             {
             }
+        }
+    }
+
+    private void SetLastFailure(Exception? failure)
+    {
+        lock (_gate)
+        {
+            _lastFailure = failure;
         }
     }
 

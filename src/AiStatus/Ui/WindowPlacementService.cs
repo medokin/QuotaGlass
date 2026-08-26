@@ -25,7 +25,7 @@ public sealed record MonitorWorkArea(
 
 public sealed record CustomOverlayPosition(Point Position, string MonitorId);
 
-public sealed class WindowPlacementService
+public sealed class WindowPlacementService : IPopupPlacementService
 {
     private const uint MonitorDefaultToNearest = 2;
     private const uint NoSize = 0x0001;

@@ -67,6 +67,7 @@ public sealed class GlobalHotkey : IDisposable
     private const uint ModifierControl = 0x0002;
     private const uint ModifierShift = 0x0004;
     private const uint ModifierWin = 0x0008;
+    private const uint ModifierNoRepeat = 0x4000;
     private const uint KeyA = 0x41;
     private readonly IHotkeyWindow _window;
     private readonly IHotkeyNative _native;
@@ -117,7 +118,7 @@ public sealed class GlobalHotkey : IDisposable
             if (!TryParse(configuredChord, out chord))
             {
                 _log.Write(LogOutcome.Invalid);
-                chord = new HotkeyChord(ModifierControl | ModifierAlt, KeyA);
+                chord = new HotkeyChord(ModifierControl | ModifierAlt | ModifierNoRepeat, KeyA);
             }
 
             try
@@ -243,7 +244,7 @@ public sealed class GlobalHotkey : IDisposable
             return false;
         }
 
-        uint modifiers = 0;
+        uint modifiers = ModifierNoRepeat;
         uint? key = null;
         foreach (string rawToken in configuredChord.Split('+'))
         {

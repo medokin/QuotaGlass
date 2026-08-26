@@ -10,9 +10,9 @@ public sealed class GlobalHotkeyTests : IDisposable
     private readonly TemporaryDirectory _directory = new();
 
     [Theory]
-    [InlineData("ctrl+alt+a", 0x0003u, 0x41u)]
-    [InlineData("Win+Shift+9", 0x000Cu, 0x39u)]
-    [InlineData("ALT+Z", 0x0001u, 0x5Au)]
+    [InlineData("ctrl+alt+a", 0x4003u, 0x41u)]
+    [InlineData("Win+Shift+9", 0x400Cu, 0x39u)]
+    [InlineData("ALT+Z", 0x4001u, 0x5Au)]
     public void Constructor_ParsesCaseInsensitiveConfiguredChord(
         string configuredChord,
         uint expectedModifiers,
@@ -46,7 +46,7 @@ public sealed class GlobalHotkeyTests : IDisposable
             configuredChord,
             new RollingFileLog(logPath));
 
-        Assert.Equal(0x0003u, native.RegisteredModifiers);
+        Assert.Equal(0x4003u, native.RegisteredModifiers);
         Assert.Equal(0x41u, native.RegisteredKey);
         Assert.Contains(" platform invalid", File.ReadAllText(logPath));
         if (configuredChord.Length > 0)

@@ -62,6 +62,53 @@ public sealed class OverlayPositionPersistenceTests
     }
 
     [Fact]
+    public async Task FlushAsync_WaitsForNewestQueuedPosition()
+    {
+        // Break caught: shutdown observes only the first drag write and disposes settings before the newest write starts.
+        AppSettings current = AppSettings.Default;
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int updateCount = 0;
+        var persistence = new OverlayPositionPersistence(async (update, _) =>
+        {
+            if (Interlocked.Increment(ref updateCount) == 1)
+            {
+                firstStarted.TrySetResult();
+                await releaseFirst.Task;
+            }
+
+            current = update(current);
+            return current;
+        });
+
+        _ = persistence.QueueAsync(new CustomOverlayPosition(new Point(100, 80), "PRIMARY"));
+        await firstStarted.Task;
+        _ = persistence.QueueAsync(new CustomOverlayPosition(new Point(200, 180), "SECONDARY"));
+        _ = persistence.QueueAsync(new CustomOverlayPosition(new Point(300, 280), "SECONDARY"));
+        Task flush = persistence.FlushAsync();
+
+        Assert.False(flush.IsCompleted);
+        releaseFirst.TrySetResult();
+        await flush;
+
+        Assert.Equal(2, updateCount);
+        Assert.Equal(new OverlayPosition(300, 280), current.OverlayPosition);
+        Assert.Equal("SECONDARY", current.OverlayMonitorId);
+    }
+
+    [Fact]
+    public async Task FlushAsync_SurfacesContainedPersistenceFailure()
+    {
+        // Break caught: the mouse path contains a write failure but shutdown cannot observe it for safe logging.
+        var persistence = new OverlayPositionPersistence((_, _) => throw new IOException("disk unavailable"));
+        await persistence.QueueAsync(new CustomOverlayPosition(new Point(100, 80), "PRIMARY"));
+
+        IOException failure = await Assert.ThrowsAsync<IOException>(() => persistence.FlushAsync());
+
+        Assert.Same(persistence.LastFailure, failure);
+    }
+
+    [Fact]
     public void ClampCustomPosition_UsesTargetDpiBeforePersistence()
     {
         // Break caught: a failed save leaves the visible overlay outside the physical working area.

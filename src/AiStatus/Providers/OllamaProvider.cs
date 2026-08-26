@@ -24,13 +24,17 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
         try
         {
             using var client = new HttpClient(_handler, disposeHandler: false);
-            using HttpResponseMessage versionResponse = await SendAsync(client, VersionUri, cancellationToken);
+            using HttpResponseMessage versionResponse = await SendAsync(client, VersionUri, cancellationToken)
+                .ConfigureAwait(false);
             versionResponse.EnsureSuccessStatusCode();
-            using JsonDocument version = JsonDocument.Parse(await versionResponse.Content.ReadAsStreamAsync(cancellationToken));
+            using JsonDocument version = JsonDocument.Parse(
+                await versionResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
 
-            using HttpResponseMessage processResponse = await SendAsync(client, ProcessUri, cancellationToken);
+            using HttpResponseMessage processResponse = await SendAsync(client, ProcessUri, cancellationToken)
+                .ConfigureAwait(false);
             processResponse.EnsureSuccessStatusCode();
-            using JsonDocument processes = JsonDocument.Parse(await processResponse.Content.ReadAsStreamAsync(cancellationToken));
+            using JsonDocument processes = JsonDocument.Parse(
+                await processResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
 
             return new ProviderSnapshot(
                 Id,
@@ -68,6 +72,6 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
-        return await client.SendAsync(request, cancellationToken);
+        return await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 }

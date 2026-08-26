@@ -82,6 +82,7 @@ public partial class App : System.Windows.Application
             _shutdownCoordinator = new ApplicationShutdownCoordinator(
                 _applicationCancellation,
                 () => _pollLoop,
+                FlushOverlayPositionPersistenceAsync,
                 dispatcher,
                 DisposeOwnedResources,
                 Shutdown,
@@ -160,6 +161,9 @@ public partial class App : System.Windows.Application
             ? settings.IdleInterval
             : settings.PollInterval;
     }
+
+    private Task FlushOverlayPositionPersistenceAsync() =>
+        _overlay?.FlushPositionPersistenceAsync() ?? Task.CompletedTask;
 
     private void OnSettingsChanged(object? sender, AppSettings settings)
     {

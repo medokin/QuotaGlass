@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Windows;
-using System.Windows.Threading;
 using AiStatus.Model;
 using Point = System.Windows.Point;
 using Rect = System.Windows.Rect;
@@ -10,16 +9,21 @@ namespace AiStatus.Ui;
 
 public partial class PopupWindow : Window, IStatusWindow
 {
-    private readonly WindowPlacementService _placementService;
+    private readonly IPopupPlacementService _placementService;
+    private readonly IPopupPositionScheduler _positionScheduler;
+    private IPopupPositionOperation? _pendingPosition;
 
     public PopupWindow()
-        : this(new WindowPlacementService())
+        : this(new WindowPlacementService(), null)
     {
     }
 
-    internal PopupWindow(WindowPlacementService placementService)
+    internal PopupWindow(
+        IPopupPlacementService placementService,
+        IPopupPositionScheduler? positionScheduler = null)
     {
         _placementService = placementService ?? throw new ArgumentNullException(nameof(placementService));
+        _positionScheduler = positionScheduler ?? new DispatcherPopupPositionScheduler(Dispatcher);
         InitializeComponent();
         Deactivated += OnDeactivated;
         IsVisibleChanged += OnIsVisibleChanged;
@@ -47,6 +51,7 @@ public partial class PopupWindow : Window, IStatusWindow
 
     protected override void OnClosed(EventArgs args)
     {
+        CancelPendingPosition();
         Deactivated -= OnDeactivated;
         IsVisibleChanged -= OnIsVisibleChanged;
         base.OnClosed(args);
@@ -56,10 +61,22 @@ public partial class PopupWindow : Window, IStatusWindow
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs args)
     {
+        CancelPendingPosition();
         if (IsVisible)
         {
-            _ = Dispatcher.BeginInvoke(PositionNearNotificationArea, DispatcherPriority.Loaded);
+            _pendingPosition = _positionScheduler.Schedule(() =>
+            {
+                _pendingPosition = null;
+                PositionNearNotificationArea();
+            });
         }
+    }
+
+    private void CancelPendingPosition()
+    {
+        IPopupPositionOperation? pending = _pendingPosition;
+        _pendingPosition = null;
+        pending?.Cancel();
     }
 
     private void PositionNearNotificationArea()

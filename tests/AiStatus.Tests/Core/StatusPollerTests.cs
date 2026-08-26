@@ -503,6 +503,56 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_ExecutesProvidersOffCapturedUiContextAndDeliversReportsOnIt()
+    {
+        // Break caught: a prequeued startup refresh runs synchronous credential scans on the captured UI thread.
+        using var uiContext = new DedicatedThreadSynchronizationContext();
+        using var cancellation = new CancellationTokenSource();
+        var providerRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reportDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int providerThread = -1;
+        int deliveryThread = -1;
+        SynchronizationContext? providerContext = null;
+        SynchronizationContext? deliveryContext = null;
+        var provider = new FakeStatusProvider("claude", (_, _) =>
+        {
+            providerThread = Environment.CurrentManagedThreadId;
+            providerContext = SynchronizationContext.Current;
+            providerRan.TrySetResult();
+            return Task.FromResult(FakeStatusProvider.Snapshot("claude"));
+        });
+
+        (StatusPoller Poller, Task Loop) running = await uiContext.InvokeAsync(() =>
+        {
+            StatusPoller poller = CreatePoller([provider]);
+            poller.ReportUpdated += (_, _) =>
+            {
+                deliveryThread = Environment.CurrentManagedThreadId;
+                deliveryContext = SynchronizationContext.Current;
+                reportDelivered.TrySetResult();
+            };
+            poller.RequestRefresh();
+            return (poller, poller.RunAsync(cancellation.Token));
+        });
+
+        try
+        {
+            await providerRan.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await reportDelivered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.NotEqual(uiContext.ThreadId, providerThread);
+            Assert.NotSame(uiContext, providerContext);
+            Assert.Equal(uiContext.ThreadId, deliveryThread);
+            Assert.Same(uiContext, deliveryContext);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await running.Loop.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Fact]
     public async Task ReportUpdated_ThrowingCapturedContextNeverFallsBackOffContextOrDuplicates()
     {
         // Break caught: a failed context post invokes UI handlers on the pump thread and again from a queued callback.
@@ -767,6 +817,66 @@ public sealed class StatusPollerTests : IDisposable
         {
             Assert.True(_callbacks.TryDequeue(out var callback));
             callback.Callback(callback.State);
+        }
+    }
+
+    private sealed class DedicatedThreadSynchronizationContext : SynchronizationContext, IDisposable
+    {
+        private readonly BlockingCollection<(SendOrPostCallback Callback, object? State)> _callbacks = [];
+        private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Thread _thread;
+
+        public DedicatedThreadSynchronizationContext()
+        {
+            _thread = new Thread(Run)
+            {
+                IsBackground = true,
+                Name = "AiStatus.Tests UI context",
+            };
+            _thread.Start();
+            _ready.Task.Wait(TimeSpan.FromSeconds(2));
+        }
+
+        public int ThreadId { get; private set; }
+
+        public override void Post(SendOrPostCallback callback, object? state) =>
+            _callbacks.Add((callback, state));
+
+        public Task<T> InvokeAsync<T>(Func<T> action)
+        {
+            var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(
+                _ =>
+                {
+                    try
+                    {
+                        completion.TrySetResult(action());
+                    }
+                    catch (Exception exception)
+                    {
+                        completion.TrySetException(exception);
+                    }
+                },
+                null);
+            return completion.Task;
+        }
+
+        public void Dispose()
+        {
+            _callbacks.CompleteAdding();
+            Assert.True(_thread.Join(TimeSpan.FromSeconds(2)), "The dedicated synchronization-context thread did not stop.");
+            _callbacks.Dispose();
+        }
+
+        private void Run()
+        {
+            SynchronizationContext.SetSynchronizationContext(this);
+            ThreadId = Environment.CurrentManagedThreadId;
+            _ready.TrySetResult();
+            foreach ((SendOrPostCallback callback, object? state) in _callbacks.GetConsumingEnumerable())
+            {
+                callback(state);
+            }
         }
     }
 

@@ -59,7 +59,7 @@ public sealed class StatusPoller : IActivityCadencePoller
     {
         StatusReport report;
         TaskCompletionSource? notificationPump;
-        await _pollGate.WaitAsync(cancellationToken);
+        await _pollGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             AppSettings settings = _settings();
@@ -74,7 +74,7 @@ public sealed class StatusPoller : IActivityCadencePoller
                     : Task.FromResult(CreateDisabledSnapshot(provider)))
                 .ToArray();
 
-            ProviderSnapshot[] providers = await Task.WhenAll(fetches);
+            ProviderSnapshot[] providers = await Task.WhenAll(fetches).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
             report = new StatusReport(_timeProvider.GetUtcNow(), providers.ToImmutableArray());
@@ -106,6 +106,24 @@ public sealed class StatusPoller : IActivityCadencePoller
             Volatile.Write(ref _runActive, 1);
         }
 
+        try
+        {
+            // The loop owns cancellation so it always reaches notification drain and cleanup.
+            await Task.Run(
+                () => RunLoopAsync(cancellationToken),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_cadenceGate)
+            {
+                Volatile.Write(ref _runActive, 0);
+            }
+        }
+    }
+
+    private async Task RunLoopAsync(CancellationToken cancellationToken)
+    {
         PeriodicTimer? timer = null;
         try
         {
@@ -117,20 +135,20 @@ public sealed class StatusPoller : IActivityCadencePoller
                 using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 Task<bool> tick = timer.WaitForNextTickAsync(waitCancellation.Token).AsTask();
                 Task refresh = WaitForRefreshAsync(waitCancellation.Token);
-                Task completed = await Task.WhenAny(tick, refresh);
+                Task completed = await Task.WhenAny(tick, refresh).ConfigureAwait(false);
 
                 waitCancellation.Cancel();
                 await Task.WhenAll(
                     ObserveCancellationAsync(tick),
-                    ObserveCancellationAsync(refresh));
+                    ObserveCancellationAsync(refresh)).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (completed == tick && !await tick)
+                if (completed == tick && !await tick.ConfigureAwait(false))
                 {
                     break;
                 }
 
-                await PollOnceAsync(cancellationToken);
+                await PollOnceAsync(cancellationToken).ConfigureAwait(false);
 
                 TimeSpan nextCadence = GetCadence();
                 if (nextCadence != cadence)
@@ -147,11 +165,7 @@ public sealed class StatusPoller : IActivityCadencePoller
         finally
         {
             timer?.Dispose();
-            await GetNotificationPump();
-            lock (_cadenceGate)
-            {
-                Volatile.Write(ref _runActive, 0);
-            }
+            await GetNotificationPump().ConfigureAwait(false);
         }
     }
 
@@ -204,7 +218,7 @@ public sealed class StatusPoller : IActivityCadencePoller
 
         try
         {
-            ProviderSnapshot snapshot = await provider.FetchAsync(linked.Token);
+            ProviderSnapshot snapshot = await provider.FetchAsync(linked.Token).ConfigureAwait(false);
             _log.Write(LogArea.Provider, OutcomeFor(snapshot.Health));
             return snapshot with { ConsecutiveFailures = 0 };
         }
@@ -274,14 +288,14 @@ public sealed class StatusPoller : IActivityCadencePoller
 
     private async Task WaitForRefreshAsync(CancellationToken cancellationToken)
     {
-        await _refreshRequests.Reader.ReadAsync(cancellationToken);
+        await _refreshRequests.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task ObserveCancellationAsync(Task task)
     {
         try
         {
-            await task;
+            await task.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -303,8 +317,8 @@ public sealed class StatusPoller : IActivityCadencePoller
                 TaskCreationOptions.RunContinuationsAsynchronously);
             _notificationPump = Task.Run(async () =>
             {
-                await start.Task;
-                await DrainNotificationsAsync();
+                await start.Task.ConfigureAwait(false);
+                await DrainNotificationsAsync().ConfigureAwait(false);
             });
             return start;
         }
@@ -327,7 +341,7 @@ public sealed class StatusPoller : IActivityCadencePoller
                 }
                 else
                 {
-                    await InvokeReportUpdatedHandlersOnContextAsync(report);
+                    await InvokeReportUpdatedHandlersOnContextAsync(report).ConfigureAwait(false);
                 }
             }
         }

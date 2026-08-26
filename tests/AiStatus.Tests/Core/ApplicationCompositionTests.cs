@@ -210,12 +210,15 @@ public sealed class ApplicationCompositionTests : IDisposable
     {
         using var cancellation = new CancellationTokenSource();
         var pollReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flushReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var dispatcher = new QueuedDispatcher();
         var events = new List<string>();
         Task pollLoop = WaitForCancellationAndReleaseAsync();
         var coordinator = new ApplicationShutdownCoordinator(
             cancellation,
             () => pollLoop,
+            FlushPositionAsync,
             dispatcher,
             () => events.Add("dispose"),
             () => events.Add("shutdown"),
@@ -231,12 +234,17 @@ public sealed class ApplicationCompositionTests : IDisposable
         Assert.Equal(0, dispatcher.PendingCount);
 
         pollReleased.TrySetResult();
+        await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(["poll"], events);
+        Assert.Equal(0, dispatcher.PendingCount);
+
+        flushReleased.TrySetResult();
         await dispatcher.WaitForPendingAsync();
         Assert.False(first.IsCompleted);
         dispatcher.RunNext();
         await first;
 
-        Assert.Equal(["poll", "dispose", "shutdown"], events);
+        Assert.Equal(["poll", "flush", "dispose", "shutdown"], events);
 
         async Task WaitForCancellationAndReleaseAsync()
         {
@@ -245,6 +253,42 @@ public sealed class ApplicationCompositionTests : IDisposable
             await pollReleased.Task;
             events.Add("poll");
         }
+
+        async Task FlushPositionAsync()
+        {
+            flushStarted.TrySetResult();
+            await flushReleased.Task;
+            events.Add("flush");
+        }
+    }
+
+    [Fact]
+    public async Task Shutdown_PositionFlushFailureIsLoggedAndDoesNotBlockDisposal()
+    {
+        // Break caught: a final persistence failure prevents SettingsStore disposal or WPF shutdown.
+        using var cancellation = new CancellationTokenSource();
+        var dispatcher = new QueuedDispatcher();
+        var events = new List<string>();
+        string logPath = Path.Combine(_directory.Path, "flush-failure.log");
+        var coordinator = new ApplicationShutdownCoordinator(
+            cancellation,
+            () => Task.CompletedTask,
+            () => Task.FromException(new IOException("path=user@example.test token=secret")),
+            dispatcher,
+            () => events.Add("dispose"),
+            () => events.Add("shutdown"),
+            new RollingFileLog(logPath));
+
+        Task shutdown = coordinator.ShutdownAsync();
+        await dispatcher.WaitForPendingAsync();
+        dispatcher.RunNext();
+        await shutdown;
+
+        Assert.Equal(["dispose", "shutdown"], events);
+        string log = File.ReadAllText(logPath);
+        Assert.Contains(" application failed exception=IOException", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", log, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("example.test", log, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -261,6 +305,7 @@ public sealed class ApplicationCompositionTests : IDisposable
         var coordinator = new ApplicationShutdownCoordinator(
             cancellation,
             () => pollCompletion.Task,
+            () => Task.CompletedTask,
             dispatcher,
             () => disposals++,
             () => shutdowns++,
@@ -320,9 +365,15 @@ public sealed class ApplicationCompositionTests : IDisposable
         using var cancellation = new CancellationTokenSource();
         int disposals = 0;
         int shutdowns = 0;
+        int flushes = 0;
         var coordinator = new ApplicationShutdownCoordinator(
             cancellation,
             () => Task.CompletedTask,
+            () =>
+            {
+                flushes++;
+                return Task.CompletedTask;
+            },
             new QueuedDispatcher(),
             () => disposals++,
             () => shutdowns++,
@@ -332,14 +383,69 @@ public sealed class ApplicationCompositionTests : IDisposable
         coordinator.ShutdownFallback();
 
         Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(1, flushes);
         Assert.Equal(1, disposals);
         Assert.Equal(0, shutdowns);
+    }
+
+    [Fact]
+    public async Task ShutdownFallback_DoesNotBlockAndObservesLaterFlushFailure()
+    {
+        // Break caught: forced exit either blocks the UI on disk I/O or abandons a later flush exception unobserved.
+        using var cancellation = new CancellationTokenSource();
+        var flush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string logPath = Path.Combine(_directory.Path, "fallback-flush.log");
+        int disposals = 0;
+        var coordinator = new ApplicationShutdownCoordinator(
+            cancellation,
+            () => Task.CompletedTask,
+            () => flush.Task,
+            new QueuedDispatcher(),
+            () => disposals++,
+            () => throw new Xunit.Sdk.XunitException("Fallback must not request WPF shutdown."),
+            new RollingFileLog(logPath));
+
+        coordinator.ShutdownFallback();
+
+        Assert.Equal(1, disposals);
+        Assert.False(flush.Task.IsCompleted);
+        flush.TrySetException(new IOException("path=user@example.test token=secret"));
+        string log = await ReadLogEventuallyAsync(logPath, "application failed exception=IOException");
+
+        Assert.Contains(" application failed exception=IOException", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", log, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("example.test", log, StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose() => _directory.Dispose();
 
     private RollingFileLog CreateLog() =>
         new(Path.Combine(_directory.Path, $"composition-{Guid.NewGuid():N}.log"));
+
+    private static async Task<string> ReadLogEventuallyAsync(string path, string expected)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (true)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    string text = File.ReadAllText(path);
+                    if (text.Contains(expected, StringComparison.Ordinal))
+                    {
+                        await Task.Delay(10, timeout.Token);
+                        return text;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+
+            await Task.Delay(10, timeout.Token);
+        }
+    }
 
     private sealed class FakeHotkeyRegistration(bool isRegistered) : IHotkeyRegistration
     {
@@ -370,7 +476,9 @@ public sealed class ApplicationCompositionTests : IDisposable
         }
 
         public async Task WaitForPendingAsync() =>
-            await _available.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(
+                await _available.WaitAsync(TimeSpan.FromSeconds(10)),
+                "The dispatcher action was not queued before the test timeout.");
 
         public void RunNext()
         {
