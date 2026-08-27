@@ -150,20 +150,24 @@ Under **Settings > Actions > General > Workflow permissions**:
 - Enable **Allow GitHub Actions to create and approve pull requests**.
 
 The workflows request job-level write permissions only where needed. Release
-Please receives `contents: write`, `pull-requests: write`, and `issues: write`.
-Artifact finalization receives `contents: write`. Build and title-validation
-jobs remain read-only.
+Please receives `actions: write` and `checks: write` for generated pull request
+checks, plus `contents: write`, `pull-requests: write`, and `issues: write` for
+release management. Artifact finalization receives `contents: write`. Build and
+title-validation jobs remain read-only.
 
-Pull requests created or updated with `GITHUB_TOKEN` may produce workflow runs
-that require maintainer approval under GitHub's token policy. Approve the run
-from the pull request or Actions page when required. The initial pull request
-that adds `pr-title.yml` cannot be checked by that new default-branch workflow;
-the check applies after this implementation is merged.
+For a generated release pull request, the trusted Release Please workflow
+verifies the expected title, body, source, target, and three generated files. It
+then creates the required title check on the release pull request commit and
+uses `workflow_dispatch` to run the normal build workflow on that commit.
+GitHub always accepts this dispatch from `GITHUB_TOKEN`, so required checks run
+without a personal access token. GitHub may also show a duplicate automatic
+pull request run awaiting approval; the trusted dispatched run provides the
+required checks, so that duplicate does not need approval.
 
 A GitHub App token or fine-grained personal access token is optional only if
-maintainers later require additional workflows on bot-created release pull
-requests to run unattended. It is not required to create the release or publish
-its artifacts.
+maintainers later require every automatic pull request event to run unattended.
+It is not required to create the release, run the required release pull request
+checks, or publish the artifacts.
 
 ### Branch protection
 
@@ -183,8 +187,9 @@ merge the generated release pull request, which is the human version and
 changelog gate. If a second trusted maintainer is added, require at least one
 approval and require approval of the latest reviewable push.
 
-If required checks are enabled immediately, remember that bot-created pull
-request runs may need manual workflow approval before the checks can complete.
+The Release Please workflow dispatches the required build checks and creates
+the trusted title check for generated release pull requests. Approval-required
+duplicate runs caused by the automatic pull request event do not block merging.
 
 ### Release immutability
 
