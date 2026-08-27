@@ -188,6 +188,9 @@ public sealed class SettingsStore : IDisposable
             _reloadTimer?.Dispose();
             _watcher.Dispose();
         }
+
+        _persistenceGate.Wait();
+        _persistenceGate.Release();
     }
 
     private void OnSettingsFileChanged(object sender, FileSystemEventArgs args)
