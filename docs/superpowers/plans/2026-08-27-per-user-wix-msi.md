@@ -6,14 +6,15 @@
 
 **Architecture:** A standalone WiX 7 project consumes a separate self-contained single-file publish. PowerShell verification tools inspect the resulting MSI and exercise clean install, running-process major upgrade, and uninstall. Existing Windows CI builds both installer test versions, while Release Please builds the versioned MSI and finalizes an exact four-asset release.
 
-**Tech Stack:** .NET 10, C# 14, WPF, WiX Toolset SDK 7.0.0, WixToolset.Util.wixext 7.0.0, PowerShell 7, Windows Installer 5.0, GitHub Actions
+**Tech Stack:** .NET 10, C# 14, WPF, WiX Toolset SDK 5.0.2, WixToolset.Util.wixext 5.0.2, PowerShell 7, Windows Installer 5.0, GitHub Actions
 
 **Spec:** `docs/superpowers/specs/2026-08-27-per-user-wix-msi-design.md`
 
 ## Global Constraints
 
 - Work in `E:\ai-status\.worktrees\issue-18-wix-msi` on `codex/issue-18-wix-msi`, based on `91ab4f4611fed22798e2fc3823ba9b7ab4d191bb`.
-- Pin `WixToolset.Sdk` and `WixToolset.Util.wixext` to exact version `7.0.0`.
+- Pin `WixToolset.Sdk` and `WixToolset.Util.wixext` to exact version `5.0.2`.
+- Do not use WiX 7 because its build requires explicit acceptance of a separate OSMF EULA.
 - Preserve `src/QuotaGlass/Properties/PublishProfiles/win-x64.pubxml` and the portable ZIP contract unchanged.
 - The MSI payload must be one self-contained `QuotaGlass.exe` for Windows x64.
 - Install per-user under `%LOCALAPPDATA%\Programs\QuotaGlass` without elevation.
@@ -70,15 +71,16 @@ recursive inventory is exactly `QuotaGlass.exe`.
 Use this project boundary:
 
 ```xml
-<Project Sdk="WixToolset.Sdk/7.0.0">
+<Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
     <InstallerPlatform>x64</InstallerPlatform>
     <OutputName>QuotaGlass-v$(MsiVersion)-win-x64</OutputName>
+    <IntermediateOutputPath>obj\$(Configuration)\$(MsiVersion)\</IntermediateOutputPath>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <DefineConstants>PayloadDir=$(PayloadDir);MsiVersion=$(MsiVersion)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="WixToolset.Util.wixext" Version="7.0.0" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
   </ItemGroup>
 </Project>
 ```
@@ -89,14 +91,18 @@ missing `QuotaGlass.exe`.
 
 - [ ] **Step 4: Author the package**
 
-Use `Package Id="QuotaGlass"`, `Version="$(var.MsiVersion)"`,
-`Manufacturer="QuotaGlass"`, `Scope="perUser"`, and x64 components. Set
+Use one explicit stable `UpgradeCode`, `ProductCode="*"`,
+`Version="$(var.MsiVersion)"`, `Manufacturer="QuotaGlass"`,
+`Scope="perUser"`, and x64 components. Set
 `ARPNOMODIFY=1`, install location and project URL properties, product icon,
 `MajorUpgrade Schedule="afterInstallInitialize"`, and one embedded cabinet.
 
 Author `LocalAppDataFolder/Programs/QuotaGlass` and a current-user Start Menu
 folder. Install one file and one Start Menu shortcut. Add no desktop shortcut
-and no Run registry value.
+and no Run registry value. Use one installer-owned value under
+`HKCU\Software\QuotaGlass\Installer` as the component key path, and add explicit
+empty-directory cleanup rows required for a per-user component. Suppress only
+ICE91 because the package is already fixed to per-user scope.
 
 Author a WiX utility immediate action that executes:
 

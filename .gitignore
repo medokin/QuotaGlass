@@ -5,6 +5,7 @@ TestResults/
 [Dd]ebug/
 [Rr]elease/
 publish/
+artifacts/
 *.user
 *.suo
 

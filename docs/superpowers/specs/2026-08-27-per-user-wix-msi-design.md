@@ -22,7 +22,7 @@ provider behavior, or the `%APPDATA%\QuotaGlass` runtime-data location.
 ## Installer Project and Payload
 
 Add `src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj` as a standalone
-SDK-style WiX project pinned to `WixToolset.Sdk/7.0.0`. The project is restored
+SDK-style WiX project pinned to `WixToolset.Sdk/5.0.2`. The project is restored
 and built explicitly because its payload must already exist. It is not added to
 `QuotaGlass.slnx`, so the established solution restore, build, and test commands
 remain valid without first publishing an installer payload.
@@ -42,10 +42,10 @@ Windows Installer, or the payload executable is absent. Its output name is
 
 ## MSI Identity, Scope, and Metadata
 
-The package has one stable WiX package identity for the QuotaGlass product
-family. WiX maps that identity to a stable upgrade code. Each MSI build receives
-a new product code, and Windows Installer major-upgrade detection relates
-versions through the stable family identity. Lower-version installs are
+The package has one explicit stable upgrade code for the QuotaGlass product
+family. Each MSI build receives a new product code, and Windows Installer
+major-upgrade detection relates versions through the stable upgrade code.
+Lower-version installs are
 rejected. The upgrade schedules removal after `InstallInitialize` so a failed
 upgrade can roll back the removal of the previous version.
 
@@ -76,9 +76,10 @@ The one required feature owns these resources:
 No desktop shortcut is authored. No Run value is created during installation.
 The installer never writes, removes, or migrates `%APPDATA%\QuotaGlass`.
 
-The installed executable is the component key path. The shortcut points to that
-file and uses the installed icon. Empty installer-owned directories are removed
-when their components are removed.
+The application component uses an installer-owned value under
+`HKCU\Software\QuotaGlass\Installer` as its per-user key path. The shortcut
+points to the installed executable and uses the product icon. Empty
+installer-owned directories are removed when the component is removed.
 
 ## Running Application and Upgrade Behavior
 
@@ -222,7 +223,8 @@ will consume the immutable versioned MSI URL and checksum.
 
 ## Security and Failure Handling
 
-- WiX SDK and utility extension packages are pinned to `7.0.0`.
+- WiX SDK and utility extension packages are pinned to `5.0.2`. WiX 7 is not
+  used because its build requires explicit acceptance of a separate OSMF EULA.
 - Existing GitHub Actions remain pinned to full commit SHAs.
 - The MSI contains only the self-contained QuotaGlass executable and installer
   metadata.
