@@ -54,7 +54,7 @@ public sealed class ApplicationCompositionTests : IDisposable
             WarningPercent = 70,
             CriticalPercent = 90,
             PollInterval = TimeSpan.FromSeconds(45),
-            Providers = rejected.Providers.SetItem("ollama", new ProviderSettings(false)),
+            Providers = rejected.Providers.SetItem("ollama", new ProviderSettings()),
             OverlayVisible = true,
             OverlayCorner = OverlayCorner.TopLeft,
         };

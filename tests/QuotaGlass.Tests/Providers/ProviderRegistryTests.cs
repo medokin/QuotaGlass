@@ -34,7 +34,7 @@ public sealed class ProviderRegistryTests : IDisposable
         IStatusProvider[] originalProviders = registry.Providers.ToArray();
         settings = settings with
         {
-            Providers = settings.Providers.SetItem("codex", new ProviderSettings(false)),
+            Providers = settings.Providers.SetItem("codex", new ProviderSettings()),
         };
 
         Assert.Equal(originalProviders, registry.Providers);

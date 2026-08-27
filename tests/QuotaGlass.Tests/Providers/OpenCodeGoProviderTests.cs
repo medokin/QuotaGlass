@@ -13,6 +13,58 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 {
     private readonly TemporaryDirectory _directory = new();
 
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, true, true, true)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, false, true, false)]
+    public async Task IsAvailableAsync_UsesCredentialOrEnabledConsoleCommand(
+        bool credentialExists,
+        bool consoleEnabled,
+        bool commandAvailable,
+        bool expected)
+    {
+        // Catches discovery parsing credentials or enabling Console fallback without its local command.
+        var provider = new OpenCodeGoProvider(
+            "opencode-auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            () => new OpenCodeConsoleSettings(consoleEnabled, null),
+            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            path => path == "opencode-auth.json" && credentialExists,
+            command => command == "opencode" && commandAvailable);
+
+        IProviderAvailability availability = provider;
+        bool result = await availability.IsAvailableAsync(CancellationToken.None);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_CredentialSecurityFailureRemainsAvailable()
+    {
+        // Catches a credential security failure falling through to disabled Console discovery.
+        var provider = new OpenCodeGoProvider(
+            "opencode-auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            () => new OpenCodeConsoleSettings(false, null),
+            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            _ => throw new System.Security.SecurityException("credential-path-must-not-be-reported"),
+            _ => throw new Xunit.Sdk.XunitException("Command discovery must not run"));
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.True(result);
+    }
+
     [Fact]
     public async Task FetchAsync_MapsUsageWindowsAndConfiguredSeverity()
     {

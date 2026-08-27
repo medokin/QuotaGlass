@@ -102,6 +102,28 @@ public sealed class TrayIconHostTests : IDisposable
     }
 
     [Fact]
+    public void ReportDelivery_ReplacesBothWindowsWithFilteredProviderReport()
+    {
+        using var harness = new HostHarness(_directory.Path);
+        StatusReport initialReport = CreateReport();
+        DateTimeOffset now = DateTimeOffset.Parse("2026-08-25T12:00:00Z");
+        StatusReport filteredReport = new(
+            now,
+            [Snapshot("codex", "Codex", HealthState.Ok, 2, DateTimeOffset.Parse("2026-08-29T01:59:59Z"))]);
+
+        harness.Reports.Raise(initialReport);
+        harness.Dispatcher.RunNext();
+        Assert.Equal(["claude", "codex", "ollama"], harness.Popup.Providers.Select(provider => provider.Id));
+        Assert.Equal(["claude", "codex", "ollama"], harness.Overlay.Providers.Select(provider => provider.Id));
+
+        harness.Reports.Raise(filteredReport);
+        harness.Dispatcher.RunNext();
+
+        Assert.Equal(["codex"], harness.Popup.Providers.Select(provider => provider.Id));
+        Assert.Equal(["codex"], harness.Overlay.Providers.Select(provider => provider.Id));
+    }
+
+    [Fact]
     public void Dispose_UnsubscribesAndInvalidatesQueuedReportDelivery()
     {
         using var harness = new HostHarness(_directory.Path);

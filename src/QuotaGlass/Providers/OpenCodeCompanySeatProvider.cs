@@ -8,7 +8,7 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionScopedStatusProvider
+public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionScopedStatusProvider, IProviderAvailability
 {
     private static readonly BigInteger MicroCentsPerCent = new(100_000);
     private const int PercentageScale = 1_000_000;
@@ -17,6 +17,7 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionSco
     private readonly TimeProvider _timeProvider;
     private readonly IOpenCodeConsoleActiveWorkspaceReader _workspaceReader;
     private readonly IOpenCodeCompanySeatClient _client;
+    private readonly Func<string, bool> _commandAvailable;
     private readonly object _selectionGate = new();
     private ProviderRetentionScope _retentionScope = ProviderRetentionScope.Unknown;
 
@@ -39,17 +40,35 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionSco
         TimeProvider? timeProvider,
         IOpenCodeConsoleActiveWorkspaceReader workspaceReader,
         IOpenCodeCompanySeatClient client)
+        : this(handler, severityFromPercent, timeProvider, workspaceReader, client, CommandAvailability.IsAvailable)
+    {
+    }
+
+    internal OpenCodeCompanySeatProvider(
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        IOpenCodeConsoleActiveWorkspaceReader workspaceReader,
+        IOpenCodeCompanySeatClient client,
+        Func<string, bool> commandAvailable)
     {
         ArgumentNullException.ThrowIfNull(handler);
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _workspaceReader = workspaceReader;
         _client = client;
+        _commandAvailable = commandAvailable;
     }
 
     public string Id => "opencode-company-seat";
 
     public string Label => "OpenCode";
+
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_commandAvailable("opencode"));
+    }
 
     ProviderRetentionScope IRetentionScopedStatusProvider.RetentionScope
     {

@@ -141,9 +141,17 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
 
     internal static async Task<byte[]?> RunQueryAsync(
         string query,
+        CancellationToken cancellationToken) => await RunQueryAsync(
+            query,
+            EffectiveCommandEnvironment.Capture(),
+            cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<byte[]?> RunQueryAsync(
+        string query,
+        EffectiveCommandEnvironment environment,
         CancellationToken cancellationToken)
     {
-        using var process = new Process { StartInfo = CreateStartInfo(query) };
+        using var process = new Process { StartInfo = CreateStartInfo(query, environment) };
 
         try
         {
@@ -158,7 +166,7 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         }
 
         Task<byte[]> stdout = ReadBoundedAsync(process.StandardOutput.BaseStream, cancellationToken);
-        Task stderr = DrainBoundedAsync(process.StandardError.BaseStream, cancellationToken);
+        Task<byte[]> stderr = ReadBoundedAsync(process.StandardError.BaseStream, cancellationToken);
         Task exit = process.WaitForExitAsync(cancellationToken);
 
         try
@@ -171,7 +179,14 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
                 pending.Remove(completed);
             }
 
-            return process.ExitCode == 0 ? stdout.Result : null;
+            if (process.ExitCode != 0)
+            {
+                throw OpenCodeCommandException.FromStderr(
+                    process.ExitCode,
+                    System.Text.Encoding.UTF8.GetString(stderr.Result));
+            }
+
+            return stdout.Result;
         }
         catch
         {
@@ -181,9 +196,15 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         }
     }
 
-    internal static ProcessStartInfo CreateStartInfo(string query)
+    internal static ProcessStartInfo CreateStartInfo(string query) =>
+        CreateStartInfo(query, EffectiveCommandEnvironment.Capture());
+
+    internal static ProcessStartInfo CreateStartInfo(
+        string query,
+        EffectiveCommandEnvironment environment)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        ArgumentNullException.ThrowIfNull(environment);
         string commandInterpreter = Environment.GetEnvironmentVariable("ComSpec")
             ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
         var startInfo = new ProcessStartInfo
@@ -194,6 +215,7 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+        environment.ApplyTo(startInfo);
         startInfo.ArgumentList.Add("/d");
         startInfo.ArgumentList.Add("/c");
         startInfo.ArgumentList.Add("opencode");
@@ -230,28 +252,6 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         }
 
         return output.ToArray();
-    }
-
-    private static async Task DrainBoundedAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        byte[] buffer = new byte[81920];
-        int total = 0;
-        while (true)
-        {
-            int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                return;
-            }
-
-            total = checked(total + read);
-            if (total > ProviderHttpSafety.MaximumJsonBytes)
-            {
-                throw InvalidOutput();
-            }
-        }
     }
 
     private static async Task ObserveCleanupAsync(

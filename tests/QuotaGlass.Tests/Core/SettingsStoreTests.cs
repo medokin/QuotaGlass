@@ -29,12 +29,61 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(80, settings.WarningPercent);
         Assert.Equal(95, settings.CriticalPercent);
         Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
-        Assert.True(settings.Providers["opencode-go"].Enabled);
         Assert.Null(settings.Providers["opencode-go"].OpenCodeConsole);
-        Assert.False(settings.Providers["opencode-company-seat"].Enabled);
+        Assert.Equal(
+            ["claude", "codex", "ollama", "opencode-company-seat", "opencode-go"],
+            settings.Providers.Keys.OrderBy(providerId => providerId));
+    }
+
+    [Fact]
+    public async Task LoadAsync_LegacyProviderEnabledFlagsAreRemovedWhenSettingsAreSaved()
+    {
+        // Break caught: legacy provider flags either affect provider discovery or survive the next save.
+        const string selector = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const string legacySettings = """
+            {
+              "PollInterval": "00:01:00",
+              "IdleInterval": "00:05:00",
+              "Providers": {
+                "claude": { "Enabled": false },
+                "codex": { "Enabled": true },
+                "opencode-go": {
+                  "Enabled": false,
+                  "OpenCodeConsole": {
+                    "Enabled": true,
+                    "WorkspaceSelector": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                  }
+                },
+                "future-provider": { "Enabled": false }
+              },
+              "OverlayVisible": true,
+              "OverlayCorner": 3,
+              "OverlayMonitorId": null,
+              "OverlayPosition": null,
+              "Hotkey": "Ctrl+Alt+A",
+              "WarningPercent": 80,
+              "CriticalPercent": 95,
+              "Autostart": false
+            }
+            """;
+        await File.WriteAllTextAsync(_path, legacySettings, CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+        await _store.SaveAsync(loaded, CancellationToken.None);
+
+        Assert.Contains("claude", loaded.Providers.Keys);
+        Assert.Contains("codex", loaded.Providers.Keys);
+        Assert.Contains("opencode-go", loaded.Providers.Keys);
+        Assert.Contains("opencode-company-seat", loaded.Providers.Keys);
+        Assert.Contains("ollama", loaded.Providers.Keys);
+        Assert.Equal(
+            new OpenCodeConsoleSettings(true, selector),
+            loaded.Providers["opencode-go"].OpenCodeConsole);
+
+        using JsonDocument saved = JsonDocument.Parse(await File.ReadAllTextAsync(_path));
         Assert.All(
-            settings.Providers.Where(pair => pair.Key != "opencode-company-seat"),
-            pair => Assert.True(pair.Value.Enabled));
+            saved.RootElement.GetProperty("Providers").EnumerateObject(),
+            provider => Assert.False(provider.Value.TryGetProperty("Enabled", out _)));
     }
 
     [Fact]
@@ -46,7 +95,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 "opencode-go",
-                new ProviderSettings(true)
+                new ProviderSettings()
                 {
                     OpenCodeConsole = new OpenCodeConsoleSettings(true, uppercaseSelector),
                 }),
@@ -74,7 +123,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 "opencode-go",
-                new ProviderSettings(true)
+                new ProviderSettings()
                 {
                     OpenCodeConsole = new OpenCodeConsoleSettings(true, selector),
                 }),
@@ -94,7 +143,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 "claude",
-                new ProviderSettings(true)
+                new ProviderSettings()
                 {
                     OpenCodeConsole = new OpenCodeConsoleSettings(true, null),
                 }),
@@ -107,9 +156,9 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadAsync_PreOpenCodeSettingsAddsEnabledOpenCodeGoProvider()
+    public async Task LoadAsync_PreOpenCodeSettingsAddsOpenCodeGoProvider()
     {
-        // Catches a settings schema addition that discards existing settings or leaves the provider unavailable.
+        // Catches a settings schema addition that discards existing settings or leaves the provider absent.
         AppSettings previous = AppSettings.Default with
         {
             Providers = AppSettings.Default.Providers.Remove("opencode-go"),
@@ -120,15 +169,15 @@ public sealed class SettingsStoreTests : IDisposable
 
         AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
 
-        Assert.True(loaded.Providers["opencode-go"].Enabled);
+        Assert.Contains("opencode-go", loaded.Providers.Keys);
         Assert.True(loaded.OverlayVisible);
         Assert.Equal(75, loaded.WarningPercent);
     }
 
     [Fact]
-    public async Task LoadAsync_PreCompanySeatSettingsAddsDisabledProvider()
+    public async Task LoadAsync_PreCompanySeatSettingsAddsProvider()
     {
-        // Catches an opt-in provider silently becoming enabled for existing installations.
+        // Catches a settings schema addition that leaves a compiled provider absent.
         AppSettings previous = AppSettings.Default with
         {
             Providers = AppSettings.Default.Providers.Remove("opencode-company-seat"),
@@ -138,7 +187,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
 
-        Assert.False(loaded.Providers["opencode-company-seat"].Enabled);
+        Assert.Contains("opencode-company-seat", loaded.Providers.Keys);
         Assert.True(loaded.OverlayVisible);
     }
 
@@ -241,7 +290,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             PollInterval = TimeSpan.FromSeconds(45),
             IdleInterval = TimeSpan.FromMinutes(7),
-            Providers = AppSettings.Default.Providers.SetItem("ollama", new ProviderSettings(false)),
+            Providers = AppSettings.Default.Providers.SetItem("ollama", new ProviderSettings()),
             OverlayVisible = true,
             Hotkey = "Ctrl+Shift+L",
             WarningPercent = 68,
@@ -320,9 +369,9 @@ public sealed class SettingsStoreTests : IDisposable
         AppSettings old = AppSettings.Default with
         {
             Providers = ImmutableDictionary<string, ProviderSettings>.Empty
-                .Add("claude", new(false))
-                .Add("codex", new(true))
-                .Add("future-provider", new(false)),
+                .Add("claude", new ProviderSettings())
+                .Add("codex", new ProviderSettings())
+                .Add("future-provider", new ProviderSettings()),
         };
         await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(old), CancellationToken.None);
 
@@ -330,10 +379,8 @@ public sealed class SettingsStoreTests : IDisposable
         await _store.SaveAsync(loaded, CancellationToken.None);
         AppSettings saved = JsonSerializer.Deserialize<AppSettings>(await File.ReadAllTextAsync(_path))!;
 
-        Assert.False(loaded.Providers["claude"].Enabled);
-        Assert.True(loaded.Providers["codex"].Enabled);
-        Assert.True(loaded.Providers["ollama"].Enabled);
-        Assert.False(loaded.Providers["future-provider"].Enabled);
+        Assert.Contains("ollama", loaded.Providers.Keys);
+        Assert.Contains("future-provider", loaded.Providers.Keys);
         Assert.Equal(loaded.Providers.OrderBy(pair => pair.Key), saved.Providers.OrderBy(pair => pair.Key));
     }
 

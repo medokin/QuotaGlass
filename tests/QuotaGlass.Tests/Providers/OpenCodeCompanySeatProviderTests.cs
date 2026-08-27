@@ -15,6 +15,26 @@ public sealed class OpenCodeCompanySeatProviderTests
         "org-active",
         Now.AddHours(1));
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task IsAvailableAsync_ReturnsOpenCodeCommandPresence(bool commandAvailable)
+    {
+        // Catches discovery reading Console state instead of checking the local command prerequisite.
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            new FixedTimeProvider(Now),
+            new StubWorkspaceReader(() => throw new Xunit.Sdk.XunitException("Workspace must not be read")),
+            new StubCompanySeatClient(() => throw new Xunit.Sdk.XunitException("Client must not run")),
+            command => command == "opencode" && commandAvailable);
+
+        IProviderAvailability availability = provider;
+        bool result = await availability.IsAvailableAsync(CancellationToken.None);
+
+        Assert.Equal(commandAvailable, result);
+    }
+
     [Fact]
     public async Task FetchAsync_PositiveBudgetBuildsCompanySeatSnapshotWithUsdInformation()
     {

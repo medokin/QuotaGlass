@@ -13,7 +13,7 @@ public enum OverlayCorner
 
 public sealed record OpenCodeConsoleSettings(bool Enabled, string? WorkspaceSelector);
 
-public sealed record ProviderSettings(bool Enabled)
+public sealed record ProviderSettings
 {
     public OpenCodeConsoleSettings? OpenCodeConsole { get; init; }
 }
@@ -37,11 +37,11 @@ public sealed record AppSettings(
         TimeSpan.FromSeconds(60),
         TimeSpan.FromMinutes(5),
         ImmutableDictionary<string, ProviderSettings>.Empty
-            .Add("claude", new(true))
-            .Add("codex", new(true))
-            .Add("opencode-go", new(true))
-            .Add("opencode-company-seat", new(false))
-            .Add("ollama", new(true)),
+            .Add("claude", new ProviderSettings())
+            .Add("codex", new ProviderSettings())
+            .Add("opencode-go", new ProviderSettings())
+            .Add("opencode-company-seat", new ProviderSettings())
+            .Add("ollama", new ProviderSettings()),
         false,
         OverlayCorner.BottomRight,
         null,
