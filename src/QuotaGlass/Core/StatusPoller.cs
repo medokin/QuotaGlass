@@ -319,7 +319,9 @@ public sealed class StatusPoller : IActivityCadencePoller
         {
             DateTimeOffset cooldownUntil = _timeProvider.GetUtcNow() + result.RetryAfter!.Value;
             _cooldowns[provider.Id] = cooldownUntil;
-            ProviderSnapshot retained = RetainFailure(provider, previous);
+            ProviderSnapshot retained = RetainFailure(
+                provider,
+                result.PreserveLastGoodData ? previous : null);
             LogProviderResult(provider, result, retained);
             return retained;
         }
@@ -335,11 +337,15 @@ public sealed class StatusPoller : IActivityCadencePoller
                 LogProviderResult(provider, result, published);
                 return published;
             case ProviderFetchOutcome.TransientFailure:
-                ProviderSnapshot transient = RetainFailure(provider, previous);
+                ProviderSnapshot transient = RetainFailure(
+                    provider,
+                    result.PreserveLastGoodData ? previous : null);
                 LogProviderResult(provider, result, transient);
                 return transient;
             case ProviderFetchOutcome.InvalidResponse:
-                ProviderSnapshot invalid = RetainFailure(provider, previous);
+                ProviderSnapshot invalid = RetainFailure(
+                    provider,
+                    result.PreserveLastGoodData ? previous : null);
                 LogProviderResult(provider, result, invalid);
                 return invalid;
             default:

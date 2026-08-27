@@ -11,7 +11,7 @@ public sealed class ProviderRegistryTests : IDisposable
     private readonly TemporaryDirectory _directory = new();
 
     [Fact]
-    public void Create_ReturnsTheFourCompiledProvidersInStableOrder()
+    public void Create_ReturnsTheFiveCompiledProvidersInStableOrder()
     {
         AppSettings settings = AppSettings.Default;
 
@@ -24,6 +24,11 @@ public sealed class ProviderRegistryTests : IDisposable
             provider => Assert.Equal("claude", provider.Id),
             provider => Assert.Equal("codex", provider.Id),
             provider => Assert.Equal("opencode-go", provider.Id),
+            provider =>
+            {
+                Assert.Equal("opencode-company-seat", provider.Id);
+                Assert.Equal("OpenCode", provider.Label);
+            },
             provider => Assert.Equal("ollama", provider.Id));
 
         IStatusProvider[] originalProviders = registry.Providers.ToArray();
@@ -42,14 +47,15 @@ public sealed class ProviderRegistryTests : IDisposable
             () => AppSettings.Default,
             CreatePaths());
 
-        Assert.Equal(4, registry.Handlers.Count);
-        Assert.Equal(4, registry.Handlers.Distinct().Count());
+        Assert.Equal(5, registry.Handlers.Count);
+        Assert.Equal(5, registry.Handlers.Distinct().Count());
         Assert.All(registry.Handlers, handler =>
         {
             Assert.Equal(
                 DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
                 handler.AutomaticDecompression);
             Assert.Equal(TimeSpan.FromMinutes(15), handler.PooledConnectionLifetime);
+            Assert.False(handler.AllowAutoRedirect);
         });
     }
 

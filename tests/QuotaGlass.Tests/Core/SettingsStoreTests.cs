@@ -31,7 +31,10 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
         Assert.True(settings.Providers["opencode-go"].Enabled);
         Assert.Null(settings.Providers["opencode-go"].OpenCodeConsole);
-        Assert.All(settings.Providers.Values, provider => Assert.True(provider.Enabled));
+        Assert.False(settings.Providers["opencode-company-seat"].Enabled);
+        Assert.All(
+            settings.Providers.Where(pair => pair.Key != "opencode-company-seat"),
+            pair => Assert.True(pair.Value.Enabled));
     }
 
     [Fact]
@@ -120,6 +123,23 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.True(loaded.Providers["opencode-go"].Enabled);
         Assert.True(loaded.OverlayVisible);
         Assert.Equal(75, loaded.WarningPercent);
+    }
+
+    [Fact]
+    public async Task LoadAsync_PreCompanySeatSettingsAddsDisabledProvider()
+    {
+        // Catches an opt-in provider silently becoming enabled for existing installations.
+        AppSettings previous = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.Remove("opencode-company-seat"),
+            OverlayVisible = true,
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(previous), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        Assert.False(loaded.Providers["opencode-company-seat"].Enabled);
+        Assert.True(loaded.OverlayVisible);
     }
 
     [Fact]

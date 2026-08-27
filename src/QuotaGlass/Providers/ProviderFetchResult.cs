@@ -20,7 +20,8 @@ public sealed record ProviderFetchResult
         ProviderFetchOutcome outcome,
         ProviderSnapshot? snapshot = null,
         HttpStatusCode? statusCode = null,
-        TimeSpan? retryAfter = null)
+        TimeSpan? retryAfter = null,
+        bool preserveLastGoodData = true)
     {
         if (!Enum.IsDefined(outcome))
         {
@@ -39,6 +40,13 @@ public sealed record ProviderFetchResult
                     ? "The fetch outcome requires a snapshot."
                     : "The fetch outcome cannot publish a snapshot.",
                 nameof(snapshot));
+        }
+
+        if (publishesSnapshot && !preserveLastGoodData)
+        {
+            throw new ArgumentException(
+                "A published snapshot cannot request last-good-data clearing.",
+                nameof(preserveLastGoodData));
         }
 
         if (outcome == ProviderFetchOutcome.RateLimited)
@@ -62,6 +70,7 @@ public sealed record ProviderFetchResult
         Snapshot = snapshot;
         StatusCode = statusCode;
         RetryAfter = retryAfter;
+        PreserveLastGoodData = preserveLastGoodData;
     }
 
     public ProviderFetchOutcome Outcome { get; }
@@ -71,4 +80,6 @@ public sealed record ProviderFetchResult
     public HttpStatusCode? StatusCode { get; }
 
     public TimeSpan? RetryAfter { get; }
+
+    public bool PreserveLastGoodData { get; }
 }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using QuotaGlass.Core;
@@ -122,6 +123,65 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         Assert.True(good.Windows.SequenceEqual(recovered.Windows));
         Assert.Equal(HealthState.Ok, recovered.Health);
         Assert.Equal(0, recovered.ConsecutiveFailures);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task OpenCodeCompanySeatSelectionChangeDoesNotRetainPreviousWorkspaceData(
+        bool changeAccount,
+        bool changeWorkspace)
+    {
+        // Catches a failed first request for a new active workspace showing the previous member's budget.
+        DateTimeOffset reset = DateTimeOffset.UtcNow.AddDays(20);
+        OpenCodeConsoleActiveWorkspace firstWorkspace = new(
+            "account-first",
+            "access-first",
+            "org-first",
+            DateTimeOffset.UtcNow.AddHours(1));
+        OpenCodeConsoleActiveWorkspace secondWorkspace = new(
+            changeAccount ? "account-second" : "account-first",
+            "access-second",
+            changeWorkspace ? "org-second" : "org-first",
+            DateTimeOffset.UtcNow.AddHours(1));
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new SequencedWorkspaceReader(firstWorkspace, secondWorkspace),
+            new SequencedCompanySeatClient(
+                new OpenCodeCompanySeatFetchResult(
+                    OpenCodeCompanySeatFetchOutcome.Success,
+                    new OpenCodeCompanySeatBudget(
+                        new BigInteger(1_000_000_000),
+                        new BigInteger(250_000_000),
+                        false,
+                        reset,
+                        "default")),
+                new OpenCodeCompanySeatFetchResult(
+                    OpenCodeCompanySeatFetchOutcome.InvalidResponse,
+                    StatusCode: HttpStatusCode.OK)));
+        AppSettings settings = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                provider.Id,
+                new ProviderSettings(true)),
+        };
+        var poller = new StatusPoller(
+            [provider],
+            () => settings,
+            new RollingFileLog(Path.Combine(_directory.Path, "company-seat-selection.log")));
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot changed = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.NotEmpty(first.Windows);
+        Assert.Empty(changed.Windows);
+        Assert.Empty(changed.Info);
+        Assert.Equal(1, changed.ConsecutiveFailures);
+        Assert.NotEqual(first.FetchedAt, changed.FetchedAt);
     }
 
     [Fact]
@@ -291,5 +351,24 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         }
 
         throw new DirectoryNotFoundException("The source fixture directory was not found.");
+    }
+
+    private sealed class SequencedWorkspaceReader(params OpenCodeConsoleActiveWorkspace[] workspaces)
+        : IOpenCodeConsoleActiveWorkspaceReader
+    {
+        private int _index;
+
+        public Task<OpenCodeConsoleActiveWorkspace?> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<OpenCodeConsoleActiveWorkspace?>(workspaces[_index++]);
+    }
+
+    private sealed class SequencedCompanySeatClient(params OpenCodeCompanySeatFetchResult[] results)
+        : IOpenCodeCompanySeatClient
+    {
+        private int _index;
+
+        public Task<OpenCodeCompanySeatFetchResult> FetchAsync(
+            OpenCodeConsoleActiveWorkspace workspace,
+            CancellationToken cancellationToken) => Task.FromResult(results[_index++]);
     }
 }
