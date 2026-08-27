@@ -185,7 +185,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         "default")),
                 new OpenCodeCompanySeatFetchResult(
                     OpenCodeCompanySeatFetchOutcome.InvalidResponse,
-                    StatusCode: HttpStatusCode.OK)));
+                    StatusCode: HttpStatusCode.OK)),
+            IsOpenCodeCommandAvailable);
         AppSettings settings = AppSettings.Default with
         {
             Providers = AppSettings.Default.Providers.SetItem(
@@ -230,7 +231,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 1 => Task.FromResult(SuccessfulBudget(25)),
                 2 => throw new HttpRequestException("synthetic transport failure"),
                 _ => throw new InvalidOperationException("Unexpected client request."),
-            }));
+            }),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -270,7 +272,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
 
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 throw new InvalidOperationException("Unreachable.");
-            }));
+            }),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider, TimeSpan.FromMilliseconds(50));
 
         ProviderSnapshot first = Assert.Single(
@@ -300,7 +303,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 new(invalid
                     ? OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse
                     : OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure)),
-            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+            new SequencedCompanySeatClient(SuccessfulBudget(25)),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -330,7 +334,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 2 => throw new IOException("synthetic command failure"),
                 _ => throw new InvalidOperationException("Unexpected workspace read."),
             }),
-            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+            new SequencedCompanySeatClient(SuccessfulBudget(25)),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -375,7 +380,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         RetryAfter: TimeSpan.FromMinutes(5)),
                     3 => SuccessfulBudget(75),
                     _ => throw new InvalidOperationException("Unexpected client request."),
-                })));
+                })),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider, timeProvider: time);
 
         await poller.PollOnceAsync(CancellationToken.None);
@@ -454,7 +460,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         RetryAfter: TimeSpan.FromMinutes(5)),
                     3 => SuccessfulBudget(75),
                     _ => throw new InvalidOperationException("Unexpected client request."),
-                })));
+                })),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(
             provider,
             TimeSpan.FromMilliseconds(50),
@@ -636,6 +643,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
 
     private static Severity SeverityFromPercent(double? percent) =>
         SeverityPolicy.FromPercent(percent, 80, 95);
+
+    private static bool IsOpenCodeCommandAvailable(string command) => command == "opencode";
 
     private static OpenCodeConsoleActiveWorkspace Workspace(string accountId, string organizationId) =>
         new(accountId, $"access-{accountId}", organizationId, DateTimeOffset.UtcNow.AddHours(1));
