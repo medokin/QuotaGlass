@@ -323,6 +323,7 @@ jobs:
       RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
       RELEASE_VERSION: ${{ needs.release_please.outputs.version }}
       RELEASE_MAJOR: ${{ needs.release_please.outputs.major }}
+      RELEASE_SHA: ${{ needs.release_please.outputs.sha }}
     steps:
       - name: Check out tagged commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -476,6 +477,89 @@ jobs:
               "$msiHash  $msiName`n",
               [Text.UTF8Encoding]::new($false))
 
+      - name: Reconcile existing draft assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $release = gh release view $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --json assets,isDraft,targetCommitish | ConvertFrom-Json
+          if (-not $release.isDraft -or $release.targetCommitish -ne $env:RELEASE_SHA) {
+              throw "Release $env:RELEASE_TAG is not the expected draft."
+          }
+
+          $releaseDirectory = Resolve-Path artifacts/release
+          $downloadRoot = Join-Path $env:RUNNER_TEMP 'existing-release-assets'
+          [void] (New-Item -ItemType Directory -Path $downloadRoot -Force)
+
+          function Test-AssetExists([string] $Name) {
+              return @($release.assets | Where-Object name -eq $Name).Count -eq 1
+          }
+
+          function Use-ExistingAsset([string] $Name) {
+              $downloadDirectory = Join-Path $downloadRoot $Name
+              [void] (New-Item -ItemType Directory -Path $downloadDirectory -Force)
+              gh release download $env:RELEASE_TAG `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --pattern $Name `
+                  --dir $downloadDirectory
+              Copy-Item `
+                  -LiteralPath (Join-Path $downloadDirectory $Name) `
+                  -Destination (Join-Path $releaseDirectory $Name) `
+                  -Force
+          }
+
+          function Resolve-PackagePair([string] $PackageName, [string] $ChecksumName) {
+              $packageExists = Test-AssetExists $PackageName
+              if ($packageExists) {
+                  Use-ExistingAsset $PackageName
+              }
+              if (Test-AssetExists $ChecksumName) {
+                  Use-ExistingAsset $ChecksumName
+              }
+              elseif ($packageExists) {
+                  $packagePath = Join-Path $releaseDirectory $PackageName
+                  $checksumPath = Join-Path $releaseDirectory $ChecksumName
+                  $hash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                  [IO.File]::WriteAllText(
+                      $checksumPath,
+                      "$hash  $PackageName`n",
+                      [Text.UTF8Encoding]::new($false))
+              }
+
+              $packagePath = Join-Path $releaseDirectory $PackageName
+              $checksumPath = Join-Path $releaseDirectory $ChecksumName
+              $actualHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+              $expectedChecksum = "$actualHash  $PackageName`n"
+              $actualChecksum = [IO.File]::ReadAllText($checksumPath)
+              if ($actualChecksum -cne $expectedChecksum) {
+                  throw "Checksum $ChecksumName does not verify $PackageName."
+              }
+          }
+
+          $archive = "QuotaGlass-$env:RELEASE_TAG-win-x64.zip"
+          $checksum = "QuotaGlass-$env:RELEASE_TAG-win-x64.sha256"
+          $msi = "QuotaGlass-$env:RELEASE_TAG-win-x64.msi"
+          $msiChecksum = "$msi.sha256"
+          Resolve-PackagePair $archive $checksum
+          Resolve-PackagePair $msi $msiChecksum
+
+          $archivePath = Join-Path $releaseDirectory $archive
+          $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+          try {
+              if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne 'QuotaGlass.exe') {
+                  throw 'The canonical ZIP must contain only QuotaGlass.exe.'
+              }
+          }
+          finally {
+              $zip.Dispose()
+          }
+
+          ./eng/installer/Test-MsiMetadata.ps1 `
+              -MsiPath (Join-Path $releaseDirectory $msi) `
+              -ExpectedVersion $env:RELEASE_VERSION
+
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -566,59 +650,16 @@ jobs:
           compare_root="${RUNNER_TEMP}/release-assets"
           mkdir -p "${compare_root}"
 
-          asset_exists() {
-            local asset_name="$1"
-            jq -e --arg name "${asset_name}" \
-              'any(.assets[]; .name == $name)' <<<"${release_json}" >/dev/null
-          }
-
-          use_existing_asset() {
-            local asset_name="$1"
-            local download_directory="${compare_root}/${asset_name}"
-            mkdir -p "${download_directory}"
-            gh release download "${RELEASE_TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --pattern "${asset_name}" \
-              --dir "${download_directory}"
-            cp "${download_directory}/${asset_name}" "artifacts/release/${asset_name}"
-          }
-
-          reconcile_package_pair() {
-            local package_name="$1"
-            local checksum_name="$2"
-
-            if asset_exists "${package_name}"; then
-              use_existing_asset "${package_name}"
-            fi
-            if asset_exists "${checksum_name}"; then
-              use_existing_asset "${checksum_name}"
-            elif asset_exists "${package_name}"; then
-              local package_hash
-              package_hash="$(sha256sum "artifacts/release/${package_name}" | cut -d' ' -f1)"
-              printf '%s  %s\n' "${package_hash}" "${package_name}" \
-                >"artifacts/release/${checksum_name}"
-            fi
-
-            (
-              cd artifacts/release
-              sha256sum --check "${checksum_name}"
-            )
-          }
-
-          reconcile_package_pair "${archive}" "${checksum}"
-          reconcile_package_pair "${msi}" "${msi_checksum}"
-
-          mapfile -t archive_entries < <(unzip -Z1 "artifacts/release/${archive}")
-          if [[ "${#archive_entries[@]}" -ne 1 || \
-                "${archive_entries[0]}" != 'QuotaGlass.exe' ]]; then
-            echo "ZIP must contain only QuotaGlass.exe: ${archive_entries[*]}" >&2
-            exit 1
-          fi
-
           for asset_name in "${archive}" "${checksum}" "${msi}" "${msi_checksum}"; do
             asset_path="artifacts/release/${asset_name}"
-            if asset_exists "${asset_name}"; then
+            if jq -e --arg name "${asset_name}" \
+              'any(.assets[]; .name == $name)' <<<"${release_json}" >/dev/null; then
               download_directory="${compare_root}/${asset_name}"
+              mkdir -p "${download_directory}"
+              gh release download "${RELEASE_TAG}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --pattern "${asset_name}" \
+                --dir "${download_directory}"
               local_hash="$(sha256sum "${asset_path}" | cut -d' ' -f1)"
               remote_hash="$(sha256sum "${download_directory}/${asset_name}" | cut -d' ' -f1)"
               if [[ "${local_hash}" != "${remote_hash}" ]]; then

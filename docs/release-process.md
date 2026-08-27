@@ -117,13 +117,13 @@ Recovery is intentionally narrow. The workflow requires the tag to match the
 root version in `.release-please-manifest.json`, requires an existing draft
 GitHub Release, and requires the tagged commit to be contained in `master`.
 
-The finalization job safely handles a previous partial upload. An existing ZIP
-or MSI becomes the canonical package for that draft, and an existing checksum
-must verify it. If only a package exists, the workflow creates its missing
-checksum. If only a checksum exists, it must verify the rebuilt package. Missing
-assets are uploaded, existing assets are never overwritten, and the draft is
-published only after its asset list contains exactly the expected ZIP, MSI, and
-their two checksums.
+The Windows package job safely handles a previous partial upload. An existing
+ZIP or MSI becomes the canonical package for that draft, and an existing
+checksum must verify it. If only a package exists, the workflow creates its
+missing checksum. If only a checksum exists, it must verify the rebuilt package.
+The canonical ZIP inventory and MSI metadata are validated again before the
+release-candidate artifact is uploaded. Finalization never overwrites existing
+assets and publishes only the exact expected ZIP, MSI, and two checksums.
 
 Do not merge another generated release pull request while a draft release is
 awaiting recovery. Workflow concurrency serializes the automated release lane,

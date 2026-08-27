@@ -1,9 +1,10 @@
 using System;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using QuotaGlass.Platform;
 using WixToolset.Dtf.WindowsInstaller;
 
 namespace QuotaGlass.InstallerActions;
@@ -11,6 +12,17 @@ namespace QuotaGlass.InstallerActions;
 public static class RunningApplicationAction
 {
     private const int MaximumPathLength = 32768;
+    private const int ProcessQueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        int desiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
+        int processId);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -32,7 +44,11 @@ public static class RunningApplicationAction
             {
                 try
                 {
-                    string processPath = GetProcessPath(process);
+                    string? processPath = TryGetProcessPath(process.Id);
+                    if (processPath is null)
+                    {
+                        continue;
+                    }
                     if (!string.Equals(
                             processPath,
                             installedExecutable,
@@ -42,7 +58,7 @@ public static class RunningApplicationAction
                     }
 
                     session.Log("Closing the installed QuotaGlass process.");
-                    _ = process.CloseMainWindow();
+                    SignalGracefulShutdown(installedExecutable);
                     if (!process.WaitForExit(15000))
                     {
                         session.Log("QuotaGlass did not exit after 15 seconds; terminating it.");
@@ -69,15 +85,41 @@ public static class RunningApplicationAction
         return ActionResult.Success;
     }
 
-    private static string GetProcessPath(Process process)
+    private static void SignalGracefulShutdown(string installedExecutable)
     {
-        var executablePath = new StringBuilder(MaximumPathLength);
-        int pathLength = executablePath.Capacity;
-        if (!QueryFullProcessImageName(process.Handle, 0, executablePath, ref pathLength))
+        try
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+            using (EventWaitHandle shutdownSignal = EventWaitHandle.OpenExisting(
+                       InstallerShutdownSignalName.FromExecutablePath(installedExecutable)))
+            {
+                shutdownSignal.Set();
+            }
+        }
+        catch (WaitHandleCannotBeOpenedException)
+        {
+            // Older or partially initialized versions do not expose the signal.
+        }
+    }
+
+    private static string? TryGetProcessPath(int processId)
+    {
+        IntPtr processHandle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (processHandle == IntPtr.Zero)
+        {
+            return null;
         }
 
-        return executablePath.ToString();
+        try
+        {
+            var executablePath = new StringBuilder(MaximumPathLength);
+            int pathLength = executablePath.Capacity;
+            return QueryFullProcessImageName(processHandle, 0, executablePath, ref pathLength)
+                ? executablePath.ToString()
+                : null;
+        }
+        finally
+        {
+            _ = CloseHandle(processHandle);
+        }
     }
 }

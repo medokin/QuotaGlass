@@ -26,6 +26,7 @@ public partial class App : System.Windows.Application
     private ApplicationSettingsCoordinator? _settingsCoordinator;
     private ApplicationActivityCoordinator? _activityCoordinator;
     private ApplicationShutdownCoordinator? _shutdownCoordinator;
+    private InstallerShutdownSignal? _installerShutdownSignal;
     private PollLoopFaultObserver? _pollLoopFaultObserver;
     private Task? _pollLoop;
     private Task? _pollLoopObservation;
@@ -94,6 +95,9 @@ public partial class App : System.Windows.Application
             string executablePath = Environment.ProcessPath
                 ?? Process.GetCurrentProcess().MainModule?.FileName
                 ?? throw new InvalidOperationException("The executable path is unavailable.");
+            _installerShutdownSignal = new InstallerShutdownSignal(
+                executablePath,
+                _shutdownCoordinator.ShutdownAsync);
             var autostart = new AutostartService(executablePath);
             _tray = new TrayIconHost(
                 Dispatcher,
@@ -231,6 +235,7 @@ public partial class App : System.Windows.Application
         }
 
         DisposeSafely(() => _tray?.Dispose());
+        DisposeSafely(() => _installerShutdownSignal?.Dispose());
         DisposeSafely(() =>
         {
             if (_settingsCoordinator is not null)

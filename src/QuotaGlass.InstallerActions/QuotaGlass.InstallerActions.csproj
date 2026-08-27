@@ -10,5 +10,7 @@
   <ItemGroup>
     <None Remove="CustomAction.config" />
     <Content Include="CustomAction.config" />
+    <Compile Include="..\QuotaGlass\Platform\InstallerShutdownSignalName.cs"
+             Link="InstallerShutdownSignalName.cs" />
   </ItemGroup>
 </Project>

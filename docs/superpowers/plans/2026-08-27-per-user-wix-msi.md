@@ -111,8 +111,9 @@ standard `RemoveRegistryValues` action with condition
 accept an already-absent value.
 
 Author an immediate, impersonated DTF action that finds only the process whose
-executable path equals `[INSTALLFOLDER]QuotaGlass.exe`. Request a normal close,
-wait 15 seconds, and terminate that exact process only as a bounded fallback.
+executable path equals `[INSTALLFOLDER]QuotaGlass.exe`. Signal the application's
+path-derived named shutdown event, wait 15 seconds for the normal shutdown
+coordinator, and terminate that exact process only as a bounded fallback.
 Use condition `WIX_UPGRADE_DETECTED OR (Installed AND REMOVE="ALL")`, accept an
 already-absent process, and disable Restart Manager reboot handling. This action
 is justified by the recorded standard Restart Manager failure and must not run

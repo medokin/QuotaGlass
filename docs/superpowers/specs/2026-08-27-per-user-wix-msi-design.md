@@ -89,8 +89,9 @@ the WPF tray process as critical and schedules a reboot during a silent major
 upgrade. The package therefore uses an immediate, impersonated DTF action when
 an MSI version is being upgraded or uninstalled. It enumerates same-named
 processes but closes only the process whose executable path equals
-`[INSTALLFOLDER]QuotaGlass.exe`. It requests a normal close, waits 15 seconds,
-and terminates that exact process only as a bounded fallback.
+`[INSTALLFOLDER]QuotaGlass.exe`. It signals the application's path-derived named
+shutdown event so the normal shutdown coordinator can flush state, waits 15
+seconds, and terminates that exact process only as a bounded fallback.
 
 The action does not run on a clean first install or repair. An already-absent
 process is accepted, the package does not request a reboot, and portable
@@ -190,13 +191,14 @@ unchanged. Finalization downloads the exact four-file workflow artifact,
 validates both checksums and the ZIP inventory, and reconciles all four assets
 against the draft release.
 
-Each existing package becomes the canonical candidate for its package/checksum
-pair. An existing checksum must verify that package; if only the package exists,
-finalization generates its missing checksum. A checksum without its package is
-accepted only when it verifies the rebuilt package. Missing assets are uploaded
-and no existing asset is overwritten. The draft is published only when its
-target and tag match the packaged commit and its asset names equal the exact
-four-file set.
+During the Windows package job, each existing package becomes the canonical
+candidate for its package/checksum pair. An existing checksum must verify that
+package; if only the package exists, the job generates its missing checksum. A
+checksum without its package is accepted only when it verifies the rebuilt
+package. The canonical ZIP inventory and MSI metadata are validated before the
+four-file candidate artifact is uploaded. Finalization uploads missing assets,
+never overwrites an existing asset, and publishes only when the target, tag, and
+exact asset set match.
 
 Manual recovery still accepts only the manifest's current draft tag, resolves
 that tag to a commit contained in `master`, and rebuilds that exact commit. It
