@@ -51,6 +51,13 @@ dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win
 The publish profile produces a framework-dependent, single-file
 `QuotaGlass.exe` for Windows x64.
 
+## Releases
+
+Versions, changelog entries, and Windows release artifacts are managed through
+Release Please. See [docs/release-process.md](docs/release-process.md) for the
+Conventional Commit rules, approval flow, repository settings, and recovery
+procedure.
+
 ## Configuration
 
 QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The

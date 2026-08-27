@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "f296126828d463660a9ab24bbe53adae3ecacf37",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "draft": true,
+  "force-tag-creation": true,
+  "pull-request-title-pattern": "chore(release): release ${version}",
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features"
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes"
+    }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "QuotaGlass"
+    }
+  }
+}
