@@ -1,9 +1,11 @@
 using System.Collections.Immutable;
 using System.Text;
 using QuotaGlass.Providers;
+using QuotaGlass.Tests.Support;
 
 namespace QuotaGlass.Tests.Providers;
 
+[Collection(ProcessEnvironmentCollection.Name)]
 public sealed class OpenCodeConsoleAccountReaderTests
 {
     [Fact]
@@ -23,6 +25,63 @@ public sealed class OpenCodeConsoleAccountReaderTests
         Assert.Equal(
             ["/d", "/c", "opencode", "db", query, "--format", "json"],
             startInfo.ArgumentList);
+    }
+
+    [Fact]
+    public void CreateStartInfo_CapturesCommandSearchEnvironmentForTheFetchAttempt()
+    {
+        // Catches cmd.exe inheriting a later or stale process PATH instead of the fetch snapshot.
+        const string refreshedPath = @"C:\refreshed-tools;C:\windows-tools";
+        const string refreshedPathExtensions = ".EXE;.CMD";
+        string? originalPath = Environment.GetEnvironmentVariable("PATH");
+        string? originalPathExtensions = Environment.GetEnvironmentVariable("PATHEXT");
+        System.Diagnostics.ProcessStartInfo startInfo;
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", refreshedPath);
+            Environment.SetEnvironmentVariable("PATHEXT", refreshedPathExtensions);
+            startInfo = OpenCodeConsoleAccountReader.CreateStartInfo("select 1;");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Environment.SetEnvironmentVariable("PATHEXT", originalPathExtensions);
+        }
+
+        Assert.StartsWith(
+            refreshedPath,
+            startInfo.Environment["PATH"],
+            StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(
+            refreshedPathExtensions,
+            startInfo.Environment["PATHEXT"],
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CreateStartInfo_AppliesTheRefreshedEffectiveCommandEnvironment()
+    {
+        // Catches discovery and cmd.exe execution using different PATH or PATHEXT values.
+        string? ReadVariable(string name, EnvironmentVariableTarget target) => (name, target) switch
+        {
+            ("PATH", EnvironmentVariableTarget.Process) => @"C:\process-tools",
+            ("PATH", EnvironmentVariableTarget.User) => @"C:\user-tools",
+            ("PATH", EnvironmentVariableTarget.Machine) => @"C:\machine-tools",
+            ("PATHEXT", EnvironmentVariableTarget.Process) => ".EXE",
+            ("PATHEXT", EnvironmentVariableTarget.User) => ".CMD",
+            ("PATHEXT", EnvironmentVariableTarget.Machine) => ".BAT",
+            _ => null,
+        };
+        EffectiveCommandEnvironment environment = EffectiveCommandEnvironment.Capture(ReadVariable);
+
+        System.Diagnostics.ProcessStartInfo startInfo =
+            OpenCodeConsoleAccountReader.CreateStartInfo("select 1;", environment);
+
+        Assert.Equal(
+            @"C:\process-tools;C:\user-tools;C:\machine-tools",
+            startInfo.Environment["PATH"]);
+        Assert.Equal(".EXE;.CMD;.BAT", startInfo.Environment["PATHEXT"]);
     }
 
     [Fact]

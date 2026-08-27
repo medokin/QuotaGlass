@@ -44,6 +44,28 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task IsAvailableAsync_CredentialSecurityFailureRemainsAvailable()
+    {
+        // Catches a credential security failure falling through to disabled Console discovery.
+        var provider = new OpenCodeGoProvider(
+            "opencode-auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            () => new OpenCodeConsoleSettings(false, null),
+            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            _ => throw new System.Security.SecurityException("credential-path-must-not-be-reported"),
+            _ => throw new Xunit.Sdk.XunitException("Command discovery must not run"));
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.True(result);
+    }
+
+    [Fact]
     public async Task FetchAsync_MapsUsageWindowsAndConfiguredSeverity()
     {
         // Catches a provider that omits valid windows, loses reset times, or clamps policy input.

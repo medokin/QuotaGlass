@@ -33,6 +33,42 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task IsAvailableAsync_ConfirmedCredentialDirectoryAbsenceReturnsUnavailable()
+    {
+        // Catches a missing credential directory being treated as indeterminate local presence.
+        var provider = new CodexProvider(
+            "auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            _ => throw new DirectoryNotFoundException());
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_TransientCredentialIoFailureRemainsAvailable()
+    {
+        // Catches a transient storage failure being collapsed into confirmed credential absence.
+        var provider = new CodexProvider(
+            "auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            _ => throw new IOException("credential-path-must-not-be-reported"));
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.True(result);
+    }
+
+    [Fact]
     public async Task FetchAsync_MapsUnixResetAndAdditionalWindows()
     {
         // Catches a provider that treats reset_at as an ISO value or omits additional limits.

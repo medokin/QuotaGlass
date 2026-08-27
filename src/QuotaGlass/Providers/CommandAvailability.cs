@@ -6,9 +6,21 @@ public static class CommandAvailability
 {
     public static bool IsAvailable(string commandName) => IsAvailable(
         commandName,
-        Environment.GetEnvironmentVariable("PATH"),
-        Environment.GetEnvironmentVariable("PATHEXT"),
+        Environment.GetEnvironmentVariable,
         File.Exists);
+
+    internal static bool IsAvailable(
+        string commandName,
+        Func<string, EnvironmentVariableTarget, string?> getVariable,
+        Func<string, bool> fileExists)
+    {
+        EffectiveCommandEnvironment environment = EffectiveCommandEnvironment.Capture(getVariable);
+        return IsAvailable(
+            commandName,
+            environment.SearchPath,
+            environment.PathExtensions,
+            fileExists);
+    }
 
     internal static bool IsAvailable(
         string commandName,

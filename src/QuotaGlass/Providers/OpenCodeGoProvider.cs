@@ -22,7 +22,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     private readonly Func<OpenCodeConsoleSettings?> _consoleSettings;
     private readonly IOpenCodeConsoleAccountReader _consoleAccountReader;
     private readonly IOpenCodeConsoleGoClient _consoleClient;
-    private readonly Func<string, bool> _fileExists;
+    private readonly Func<string, bool> _credentialProbe;
     private readonly Func<string, bool> _commandAvailable;
 
     public OpenCodeGoProvider(
@@ -88,7 +88,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             consoleSettings,
             consoleAccountReader,
             consoleClient,
-            File.Exists,
+            CredentialFilePrerequisite.Probe,
             CommandAvailability.IsAvailable)
     {
     }
@@ -102,7 +102,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         Func<OpenCodeConsoleSettings?> consoleSettings,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient,
-        Func<string, bool> fileExists,
+        Func<string, bool> credentialProbe,
         Func<string, bool> commandAvailable)
     {
         _credentialPath = credentialPath;
@@ -113,7 +113,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         _consoleSettings = consoleSettings;
         _consoleAccountReader = consoleAccountReader;
         _consoleClient = consoleClient;
-        _fileExists = fileExists;
+        _credentialProbe = credentialProbe;
         _commandAvailable = commandAvailable;
     }
 
@@ -124,7 +124,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        bool available = _fileExists(_credentialPath) ||
+        bool available = CredentialFilePrerequisite.IsPresent(_credentialPath, _credentialProbe) ||
             (_consoleSettings()?.Enabled == true && _commandAvailable("opencode"));
         return Task.FromResult(available);
     }

@@ -181,9 +181,15 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         }
     }
 
-    internal static ProcessStartInfo CreateStartInfo(string query)
+    internal static ProcessStartInfo CreateStartInfo(string query) =>
+        CreateStartInfo(query, EffectiveCommandEnvironment.Capture());
+
+    internal static ProcessStartInfo CreateStartInfo(
+        string query,
+        EffectiveCommandEnvironment environment)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        ArgumentNullException.ThrowIfNull(environment);
         string commandInterpreter = Environment.GetEnvironmentVariable("ComSpec")
             ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
         var startInfo = new ProcessStartInfo
@@ -194,6 +200,7 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+        environment.ApplyTo(startInfo);
         startInfo.ArgumentList.Add("/d");
         startInfo.ArgumentList.Add("/c");
         startInfo.ArgumentList.Add("opencode");

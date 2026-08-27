@@ -513,6 +513,130 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task PollOnceAsync_SynchronouslyBlockingAvailabilityDoesNotDelayOtherProbeAndTimesOut()
+    {
+        // Break caught: synchronous discovery blocks poll startup and escapes the configured timeout.
+        var blockingStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockingFinished = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var otherStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var otherFetched = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var blocking = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ =>
+            {
+                blockingStarted.TrySetResult();
+                release.Wait();
+                blockingFinished.TrySetResult();
+                return Task.FromResult(true);
+            },
+        };
+        var other = new AvailabilityStatusProvider("codex")
+        {
+            Availability = _ =>
+            {
+                otherStarted.TrySetResult();
+                return Task.FromResult(true);
+            },
+            Fetch = (_, _) =>
+            {
+                otherFetched.TrySetResult();
+                return Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.Success,
+                    FakeStatusProvider.Snapshot("codex")));
+            },
+        };
+        var time = new RecordingTimeProvider();
+        TimeSpan providerTimeout = TimeSpan.FromSeconds(10);
+        StatusPoller poller = CreatePoller(
+            [blocking, other],
+            timeProvider: time,
+            providerTimeout: providerTimeout);
+        Task<StatusReport> poll = Task.Run(() => poller.PollOnceAsync(CancellationToken.None));
+
+        try
+        {
+            await blockingStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await otherStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await otherFetched.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            _ = await time.WaitForTimerAsync(
+                providerTimeout,
+                Timeout.InfiniteTimeSpan);
+            Assert.Equal(1, time.CountActiveTimers(providerTimeout, Timeout.InfiniteTimeSpan));
+            time.FireTimers(providerTimeout, Timeout.InfiniteTimeSpan);
+
+            StatusReport report = await poll.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Equal("codex", Assert.Single(report.Providers).Id);
+            Assert.Equal(0, blocking.FetchCount);
+            Assert.Equal(1, other.FetchCount);
+
+            release.Set();
+            await blockingFinished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Equal("codex", Assert.Single(poller.Current.Providers).Id);
+            Assert.Equal(0, blocking.FetchCount);
+        }
+        finally
+        {
+            release.Set();
+            await blockingFinished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await poll.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_CallerCancellationStopsWaitingForSynchronousAvailability()
+    {
+        // Break caught: caller cancellation waits for a non-cooperative synchronous probe to return.
+        var blockingStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockingFinished = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ =>
+            {
+                blockingStarted.TrySetResult();
+                release.Wait();
+                blockingFinished.TrySetResult();
+                return Task.FromResult(true);
+            },
+        };
+        StatusPoller poller = CreatePoller([provider], providerTimeout: TimeSpan.FromMinutes(1));
+        using var cancellation = new CancellationTokenSource();
+        Task<StatusReport> poll = Task.Run(() => poller.PollOnceAsync(cancellation.Token));
+
+        try
+        {
+            await blockingStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => poll.WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.Empty(poller.Current.Providers);
+            Assert.Equal(0, provider.FetchCount);
+        }
+        finally
+        {
+            release.Set();
+            await blockingFinished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            try
+            {
+                await poll.WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task PollOnceAsync_AvailabilityExceptionIsSanitizedAndProviderIsOmitted()
     {
         // Break caught: discovery exceptions publish providers or leak exception messages into the log.
@@ -1334,6 +1458,21 @@ public sealed class StatusPollerTests : IDisposable
             {
                 return _timers.Count(timer =>
                     !timer.IsDisposed && timer.DueTime == dueTime && timer.Period == period);
+            }
+        }
+
+        public void FireTimers(TimeSpan dueTime, TimeSpan period)
+        {
+            RecordingTimer[] timers;
+            lock (_gate)
+            {
+                timers = _timers.Where(timer =>
+                    !timer.IsDisposed && timer.DueTime == dueTime && timer.Period == period).ToArray();
+            }
+
+            foreach (RecordingTimer timer in timers)
+            {
+                timer.Fire();
             }
         }
     }

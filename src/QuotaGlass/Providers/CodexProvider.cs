@@ -18,7 +18,7 @@ public sealed class CodexProvider : IStatusProvider, IProviderAvailability
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
-    private readonly Func<string, bool> _fileExists;
+    private readonly Func<string, bool> _credentialProbe;
 
     public CodexProvider(
         string credentialPath,
@@ -35,7 +35,13 @@ public sealed class CodexProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential)
-        : this(credentialPath, handler, severityFromPercent, timeProvider, openCredential, File.Exists)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            openCredential,
+            CredentialFilePrerequisite.Probe)
     {
     }
 
@@ -45,14 +51,14 @@ public sealed class CodexProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
-        Func<string, bool> fileExists)
+        Func<string, bool> credentialProbe)
     {
         _credentialPath = credentialPath;
         _handler = handler;
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
-        _fileExists = fileExists;
+        _credentialProbe = credentialProbe;
     }
 
     public string Id => "codex";
@@ -62,7 +68,9 @@ public sealed class CodexProvider : IStatusProvider, IProviderAvailability
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(_fileExists(_credentialPath));
+        return Task.FromResult(CredentialFilePrerequisite.IsPresent(
+            _credentialPath,
+            _credentialProbe));
     }
 
     internal static Stream OpenCredentialStream(string credentialPath) =>

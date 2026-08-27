@@ -259,10 +259,15 @@ public sealed class StatusPoller : IActivityCadencePoller
 
         using var timeout = new CancellationTokenSource(_providerTimeout, _timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        Task<bool> probe = Task.Run(
+            () => availability.IsAvailableAsync(linked.Token),
+            CancellationToken.None);
+        bool resultObserved = false;
 
         try
         {
-            bool isAvailable = await availability.IsAvailableAsync(linked.Token).ConfigureAwait(false);
+            bool isAvailable = await probe.WaitAsync(linked.Token).ConfigureAwait(false);
+            resultObserved = true;
             return isAvailable
                 ? null
                 : new ProviderAttempt(provider, previous, ProviderAttemptKind.Unavailable);
@@ -286,6 +291,24 @@ public sealed class StatusPoller : IActivityCadencePoller
                 previous,
                 ProviderAttemptKind.AvailabilityFailed,
                 Exception: exception);
+        }
+        finally
+        {
+            if (!resultObserved)
+            {
+                _ = ObserveAvailabilityProbeAsync(probe);
+            }
+        }
+    }
+
+    private static async Task ObserveAvailabilityProbeAsync(Task probe)
+    {
+        try
+        {
+            await probe.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
         }
     }
 

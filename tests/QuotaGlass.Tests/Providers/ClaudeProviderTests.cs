@@ -33,6 +33,42 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task IsAvailableAsync_ConfirmedCredentialAbsenceReturnsUnavailable()
+    {
+        // Catches a missing credential being treated as indeterminate local presence.
+        var provider = new ClaudeProvider(
+            "credential.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            _ => throw new FileNotFoundException());
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_AccessDeniedCredentialProbeRemainsAvailable()
+    {
+        // Catches access denied being collapsed into confirmed credential absence.
+        var provider = new ClaudeProvider(
+            "credential.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            _ => throw new UnauthorizedAccessException("credential-path-must-not-be-reported"));
+
+        bool result = await ((IProviderAvailability)provider)
+            .IsAvailableAsync(CancellationToken.None);
+
+        Assert.True(result);
+    }
+
+    [Fact]
     public async Task FetchAsync_MapsLimitsAndUncappedSpend()
     {
         // Catches a provider that maps obsolete top-level windows or treats uncapped spend as a quota.
