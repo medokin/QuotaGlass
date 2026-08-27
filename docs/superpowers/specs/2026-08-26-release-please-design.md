@@ -54,7 +54,10 @@ changelog.
 `.github/workflows/pr-title.yml` uses a commit-SHA-pinned
 `amannn/action-semantic-pull-request` v6 action on `pull_request_target` events.
 It validates titles without checking out or executing pull request code. The
-workflow also rejects `Release-As:` trailers in pull request descriptions.
+workflow rejects `Release-As:` and Release Please commit-override markers
+anywhere in pull request descriptions, including quoted text and examples,
+because Release Please scans the complete body for raw control markers before
+parsing the squash commit.
 
 The repository must allow squash merging only and use the pull request title as
 the squash commit title. The pull request description is retained as the squash

@@ -46,7 +46,9 @@ Version effects are:
 
 Prefer `!` in the title for breaking changes. When using a `BREAKING CHANGE:`
 footer, keep it in the pull request body because that body becomes the squash
-commit body. Do not use `Release-As:` or `BEGIN_COMMIT_OVERRIDE` directives.
+commit body. Do not include `Release-As:`, `BEGIN_COMMIT_OVERRIDE`, or
+`END_COMMIT_OVERRIDE` anywhere in a pull request body, including quoted text or
+examples. Release Please scans the complete body for these raw control markers.
 
 Pull requests should explain the user-visible outcome, link relevant issues,
 list verification commands, and include screenshots for UI changes. Ensure

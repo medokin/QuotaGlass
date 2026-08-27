@@ -39,13 +39,13 @@ jobs:
             The subject "{subject}" in "{title}" must be lowercase, start with
             a letter or number, and must not end with a period.
 
-      - name: Reject Release Please overrides
+      - name: Reject Release Please control markers
         shell: bash
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           if printf '%s\n' "${PR_BODY}" | grep -Eiq \
-            '^[[:space:]]*(Release-As:|BEGIN_COMMIT_OVERRIDE)'; then
-            echo 'Pull request bodies must not override Release Please versioning or commits.' >&2
+            '(Release-As:|BEGIN_COMMIT_OVERRIDE|END_COMMIT_OVERRIDE)'; then
+            echo 'Pull request bodies must not contain Release Please control markers.' >&2
             exit 1
           fi

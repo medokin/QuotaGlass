@@ -39,8 +39,10 @@ BREAKING CHANGE: existing settings files must be recreated
 ```
 
 The repository retains the pull request body as the squash commit body so this
-footer reaches Release Please. `Release-As:` and `BEGIN_COMMIT_OVERRIDE` are
-forbidden because they bypass the repository's version policy.
+footer reaches Release Please. `Release-As:`, `BEGIN_COMMIT_OVERRIDE`, and
+`END_COMMIT_OVERRIDE` are forbidden anywhere in pull request bodies, including
+quoted text and examples. Release Please scans the complete body for these raw
+control markers, which can bypass version policy or replace the commit message.
 
 ## Contributor flow
 
