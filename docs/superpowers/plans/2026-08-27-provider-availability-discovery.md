@@ -59,7 +59,7 @@ Create every default provider entry with `new ProviderSettings()`. Keep the exis
 
 - [ ] **Step 4: Update affected construction tests and run the focused suite**
 
-Replace provider-level boolean construction with `new ProviderSettings()` and keep Console-specific booleans unchanged.
+Replace provider-level boolean construction with `new ProviderSettings()` and preserve only the optional Console workspace selector.
 
 Run: `dotnet test tests/QuotaGlass.Tests/QuotaGlass.Tests.csproj -c Release --filter "FullyQualifiedName~SettingsStoreTests|FullyQualifiedName~ApplicationCompositionTests|FullyQualifiedName~ProviderRegistryTests"`
 
