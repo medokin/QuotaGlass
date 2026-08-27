@@ -393,16 +393,17 @@ public sealed class SettingsStoreTests : IDisposable
     {
         // Break caught: a partially written watched file resets active settings or floods sensitive diagnostics.
         string logPath = Path.Combine(_directory.Path, "settings.log");
-        using var store = new SettingsStore(
-            _path,
-            TimeSpan.FromMilliseconds(30),
-            new RollingFileLog(logPath));
         AppSettings active = AppSettings.Default with
         {
             Hotkey = "Ctrl+Shift+L",
             WarningPercent = 70,
         };
-        await store.SaveAsync(active, CancellationToken.None);
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(active), CancellationToken.None);
+        using var store = new SettingsStore(
+            _path,
+            TimeSpan.FromMilliseconds(30),
+            new RollingFileLog(logPath));
+        await store.LoadAsync(CancellationToken.None);
         int changes = 0;
         store.Changed += (_, _) => Interlocked.Increment(ref changes);
 

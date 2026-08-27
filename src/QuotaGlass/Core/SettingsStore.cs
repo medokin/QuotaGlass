@@ -18,6 +18,7 @@ public sealed class SettingsStore : IDisposable
     private readonly FileSystemWatcher _watcher;
     private System.Threading.Timer? _reloadTimer;
     private AppSettings _current = AppSettings.Default;
+    private bool _invalidReloadReported;
     private bool _disposed;
 
     public SettingsStore(string path)
@@ -75,6 +76,7 @@ public sealed class SettingsStore : IDisposable
             {
                 ThrowIfDisposed();
                 _current = loaded;
+                _invalidReloadReported = false;
             }
 
             return loaded;
@@ -164,6 +166,7 @@ public sealed class SettingsStore : IDisposable
             {
                 ThrowIfDisposed();
                 _current = settings;
+                _invalidReloadReported = false;
             }
         }
         finally
@@ -240,7 +243,23 @@ public sealed class SettingsStore : IDisposable
             (bool isValid, AppSettings settings) = await ReadAsync(CancellationToken.None).ConfigureAwait(false);
             if (!isValid)
             {
-                _log?.Write(LogArea.Settings, LogOutcome.Invalid);
+                bool shouldLog;
+                lock (_gate)
+                {
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
+                    shouldLog = !_invalidReloadReported;
+                    _invalidReloadReported = true;
+                }
+
+                if (shouldLog)
+                {
+                    _log?.Write(LogArea.Settings, LogOutcome.Invalid);
+                }
+
                 return;
             }
 
@@ -252,6 +271,7 @@ public sealed class SettingsStore : IDisposable
                 }
 
                 _current = settings;
+                _invalidReloadReported = false;
                 changed = Changed;
                 changedSettings = settings;
             }
