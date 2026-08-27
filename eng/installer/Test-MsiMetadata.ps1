@@ -216,30 +216,29 @@ try {
     $customActions = @(Get-MsiRows $database `
         'SELECT `Action`,`Type`,`Source`,`Target` FROM `CustomAction`' `
         @('Action', 'Type', 'Source', 'Target'))
-    $closeAction = @($customActions | Where-Object Action -eq 'CloseRunningQuotaGlass')
+    $closeAction = @($customActions | Where-Object Action -eq 'CloseInstalledQuotaGlass')
     Assert-Equal $closeAction.Count 1 'Close application action count'
-    Assert-Equal $closeAction[0].Source 'Wix4UtilCA_X64' 'Close application binary'
-    Assert-Equal $closeAction[0].Target 'WixQuietExec' 'Close application entry point'
-
-    $closeCommand = @($customActions | Where-Object Action -eq 'SetCloseRunningQuotaGlassCommand')
-    Assert-Equal $closeCommand.Count 1 'Close application command count'
-    Assert-True `
-        ($closeCommand[0].Target -match 'taskkill\.exe" /F /IM "QuotaGlass\.exe"$') `
-        "Close application command has an unexpected target: '$($closeCommand[0].Target)'."
+    Assert-Equal $closeAction[0].Source 'QuotaGlassInstallerActions' 'Close application binary'
+    Assert-Equal $closeAction[0].Target 'CloseInstalledQuotaGlass' 'Close application entry point'
+    Assert-True (([int] $closeAction[0].Type -band 0x40) -eq 0) 'Close application failures must be checked.'
 
     $cleanupAction = @($customActions | Where-Object Action -eq 'AddQuotaGlassAutostartCleanup')
     Assert-Equal $cleanupAction.Count 1 'Autostart cleanup action count'
     Assert-Equal $cleanupAction[0].Source 'QuotaGlassInstallerActions' 'Autostart cleanup binary'
     Assert-Equal $cleanupAction[0].Target 'AddQuotaGlassAutostartCleanup' 'Autostart cleanup entry point'
     Assert-True (([int] $cleanupAction[0].Type -band 0x400) -eq 0) 'Autostart cleanup must be immediate.'
+    Assert-True (([int] $cleanupAction[0].Type -band 0x40) -eq 0) 'Autostart cleanup failures must be checked.'
 
     $sequences = @(Get-MsiRows $database `
         'SELECT `Action`,`Condition`,`Sequence` FROM `InstallExecuteSequence`' `
         @('Action', 'Condition', 'Sequence'))
-    $closeSequence = @($sequences | Where-Object Action -eq 'CloseRunningQuotaGlass')
+    $closeSequence = @($sequences | Where-Object Action -eq 'CloseInstalledQuotaGlass')
     $installValidateSequence = @($sequences | Where-Object Action -eq 'InstallValidate')
     Assert-Equal $closeSequence.Count 1 'Close application sequence count'
-    Assert-Equal $closeSequence[0].Condition 'Installed OR WIX_UPGRADE_DETECTED' 'Close application condition'
+    Assert-Equal `
+        $closeSequence[0].Condition `
+        'WIX_UPGRADE_DETECTED OR (Installed AND REMOVE="ALL")' `
+        'Close application condition'
     Assert-Equal $installValidateSequence.Count 1 'InstallValidate sequence count'
     Assert-True `
         ([int] $closeSequence[0].Sequence -lt [int] $installValidateSequence[0].Sequence) `

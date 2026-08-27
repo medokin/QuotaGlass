@@ -86,15 +86,17 @@ installer-owned directories are removed when the component is removed.
 Windows Installer 5.0 Restart Manager detects the installed `QuotaGlass.exe`
 when it is in use, but local lifecycle verification showed that it classifies
 the WPF tray process as critical and schedules a reboot during a silent major
-upgrade. The package therefore uses an immediate, impersonated WiX utility
-action to invoke the system `taskkill.exe` for `QuotaGlass.exe` when an MSI
-version is already installed or an upgrade is detected. An already-absent
-process is accepted and the package does not request a reboot.
+upgrade. The package therefore uses an immediate, impersonated DTF action when
+an MSI version is being upgraded or uninstalled. It enumerates same-named
+processes but closes only the process whose executable path equals
+`[INSTALLFOLDER]QuotaGlass.exe`. It requests a normal close, waits 15 seconds,
+and terminates that exact process only as a bounded fallback.
 
-The action does not run on a clean first install. It is limited to
-`QuotaGlass.exe` and exists only because the standard Restart Manager path did
-not satisfy the required no-reboot running-upgrade behavior on the supported
-Windows environment. QuotaGlass is not automatically relaunched.
+The action does not run on a clean first install or repair. An already-absent
+process is accepted, the package does not request a reboot, and portable
+QuotaGlass processes in other directories remain untouched. The action exists
+only because the standard Restart Manager path did not satisfy the required
+no-reboot running-upgrade behavior. QuotaGlass is not automatically relaunched.
 
 ## Autostart Cleanup
 
@@ -188,15 +190,19 @@ unchanged. Finalization downloads the exact four-file workflow artifact,
 validates both checksums and the ZIP inventory, and reconciles all four assets
 against the draft release.
 
-Each missing asset is uploaded. Each existing asset is downloaded and accepted
-only if its SHA-256 matches the candidate. No asset is overwritten. The draft is
-published only when its target and tag match the packaged commit and its asset
-names equal the exact four-file set.
+Each existing package becomes the canonical candidate for its package/checksum
+pair. An existing checksum must verify that package; if only the package exists,
+finalization generates its missing checksum. A checksum without its package is
+accepted only when it verifies the rebuilt package. Missing assets are uploaded
+and no existing asset is overwritten. The draft is published only when its
+target and tag match the packaged commit and its asset names equal the exact
+four-file set.
 
 Manual recovery still accepts only the manifest's current draft tag, resolves
-that tag to a commit contained in `master`, and rebuilds that exact commit. The
-same four-file validation and no-overwrite rules apply to normal and recovery
-runs.
+that tag to a commit contained in `master`, and rebuilds that exact commit. It
+then reconciles the rebuilt candidate with any canonical package pairs already
+uploaded by the previous attempt. The same four-file validation and no-overwrite
+rules apply to normal and recovery runs.
 
 ## Local OpenCode Validation
 

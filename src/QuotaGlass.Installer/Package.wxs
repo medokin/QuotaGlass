@@ -1,5 +1,4 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="QuotaGlass"
            Manufacturer="QuotaGlass"
            Version="$(var.MsiVersion)"
@@ -64,32 +63,25 @@
                      KeyPath="yes" />
     </Component>
 
-    <CustomAction Id="SetCloseRunningQuotaGlassCommand"
-                  Property="WixQuietExecCmdLine"
-                  Value="&quot;[SystemFolder]taskkill.exe&quot; /F /IM &quot;QuotaGlass.exe&quot;" />
-    <CustomAction Id="CloseRunningQuotaGlass"
-                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
-                  DllEntry="WixQuietExec"
-                  Execute="immediate"
-                  Impersonate="yes"
-                  Return="ignore" />
-
     <Binary Id="QuotaGlassInstallerActions"
             SourceFile="$(var.QuotaGlass.InstallerActions.TargetDir)QuotaGlass.InstallerActions.CA.dll" />
+    <CustomAction Id="CloseInstalledQuotaGlass"
+                  BinaryRef="QuotaGlassInstallerActions"
+                  DllEntry="CloseInstalledQuotaGlass"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="check" />
     <CustomAction Id="AddQuotaGlassAutostartCleanup"
                   BinaryRef="QuotaGlassInstallerActions"
                   DllEntry="AddQuotaGlassAutostartCleanup"
                   Execute="immediate"
                   Impersonate="yes"
-                  Return="ignore" />
+                  Return="check" />
 
     <InstallExecuteSequence>
-      <Custom Action="SetCloseRunningQuotaGlassCommand"
-              Before="CloseRunningQuotaGlass"
-              Condition="Installed OR WIX_UPGRADE_DETECTED" />
-      <Custom Action="CloseRunningQuotaGlass"
+      <Custom Action="CloseInstalledQuotaGlass"
               Before="InstallValidate"
-              Condition="Installed OR WIX_UPGRADE_DETECTED" />
+              Condition="WIX_UPGRADE_DETECTED OR (Installed AND REMOVE=&quot;ALL&quot;)" />
       <Custom Action="AddQuotaGlassAutostartCleanup"
               Before="RemoveRegistryValues"
               Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />

@@ -6,22 +6,22 @@
 
 **Architecture:** A standalone WiX 5 project consumes a separate self-contained single-file publish. PowerShell verification tools inspect the resulting MSI and exercise clean install, running-process major upgrade, and uninstall. Existing Windows CI builds both installer test versions, while Release Please builds the versioned MSI and finalizes an exact four-asset release.
 
-**Tech Stack:** .NET 10, C# 14, WPF, WiX Toolset SDK 5.0.2, WixToolset.Util.wixext 5.0.2, PowerShell 7, Windows Installer 5.0, GitHub Actions
+**Tech Stack:** .NET 10, C# 14, WPF, WiX Toolset SDK 5.0.2, WixToolset.Dtf.CustomAction 5.0.2, PowerShell 7, Windows Installer 5.0, GitHub Actions
 
 **Spec:** `docs/superpowers/specs/2026-08-27-per-user-wix-msi-design.md`
 
 ## Global Constraints
 
 - Work in `E:\ai-status\.worktrees\issue-18-wix-msi` on `codex/issue-18-wix-msi`, based on `91ab4f4611fed22798e2fc3823ba9b7ab4d191bb`.
-- Pin `WixToolset.Sdk` and `WixToolset.Util.wixext` to exact version `5.0.2`.
+- Pin `WixToolset.Sdk` and `WixToolset.Dtf.CustomAction` to exact version `5.0.2`.
 - Do not use WiX 7 because its build requires explicit acceptance of a separate OSMF EULA.
 - Preserve `src/QuotaGlass/Properties/PublishProfiles/win-x64.pubxml` and the portable ZIP contract unchanged.
 - The MSI payload must be one self-contained `QuotaGlass.exe` for Windows x64.
 - Install per-user under `%LOCALAPPDATA%\Programs\QuotaGlass` without elevation.
 - Keep `%APPDATA%\QuotaGlass` settings and logs through install, upgrade, and uninstall.
 - Do not create a desktop shortcut or enable Start with Windows during install.
-- Use an immediate, impersonated WiX utility action to stop `QuotaGlass.exe` only because lifecycle verification proved that standard Restart Manager classifies the running WPF tray process as critical and schedules a reboot.
-- The only planned custom action removes the single current-user `QuotaGlass` Run value on a true uninstall because Windows Installer cannot express that operation in standard registry tables.
+- Use an immediate, impersonated DTF action to close only the installed `QuotaGlass.exe` process because lifecycle verification proved that standard Restart Manager classifies the running WPF tray process as critical and schedules a reboot.
+- Use a second narrowly scoped DTF action to remove the single current-user `QuotaGlass` Run value on a true uninstall because authored Windows Installer registry rows cannot express that operation.
 - Do not sign the executable or MSI.
 - Release Please output is the only release version source.
 - Third-party GitHub Actions remain pinned to full commit SHAs.
@@ -80,7 +80,7 @@ Use this project boundary:
     <DefineConstants>PayloadDir=$(PayloadDir);MsiVersion=$(MsiVersion)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+    <ProjectReference Include="..\QuotaGlass.InstallerActions\QuotaGlass.InstallerActions.csproj" />
   </ItemGroup>
 </Project>
 ```
@@ -110,11 +110,13 @@ standard `RemoveRegistryValues` action with condition
 `REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`. Use current-user impersonation and
 accept an already-absent value.
 
-Author an immediate, impersonated WiX utility action that invokes the system
-`taskkill.exe` for `QuotaGlass.exe` with condition
-`Installed OR WIX_UPGRADE_DETECTED`. Ignore an already-absent process and disable
-Restart Manager reboot handling. This action is justified by the recorded
-standard Restart Manager failure and must not run on a clean first install.
+Author an immediate, impersonated DTF action that finds only the process whose
+executable path equals `[INSTALLFOLDER]QuotaGlass.exe`. Request a normal close,
+wait 15 seconds, and terminate that exact process only as a bounded fallback.
+Use condition `WIX_UPGRADE_DETECTED OR (Installed AND REMOVE="ALL")`, accept an
+already-absent process, and disable Restart Manager reboot handling. This action
+is justified by the recorded standard Restart Manager failure and must not run
+on a clean first install or repair.
 
 - [ ] **Step 5: Restore and build two MSIs**
 
@@ -444,7 +446,7 @@ feat(release): add a per-user wix msi installer
 
 The body must state the user-visible outcome, link `#18`, list exact local
 verification, call out the standard Restart Manager running-upgrade result,
-describe the one justified uninstall custom action, note the unsigned
+describe the two justified, path-bounded custom actions, note the unsigned
 unknown-publisher warning, and end with `Created with Codex`.
 
 - [ ] **Step 7: Verify the remote pull request**

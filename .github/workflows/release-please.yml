@@ -566,16 +566,59 @@ jobs:
           compare_root="${RUNNER_TEMP}/release-assets"
           mkdir -p "${compare_root}"
 
+          asset_exists() {
+            local asset_name="$1"
+            jq -e --arg name "${asset_name}" \
+              'any(.assets[]; .name == $name)' <<<"${release_json}" >/dev/null
+          }
+
+          use_existing_asset() {
+            local asset_name="$1"
+            local download_directory="${compare_root}/${asset_name}"
+            mkdir -p "${download_directory}"
+            gh release download "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "${asset_name}" \
+              --dir "${download_directory}"
+            cp "${download_directory}/${asset_name}" "artifacts/release/${asset_name}"
+          }
+
+          reconcile_package_pair() {
+            local package_name="$1"
+            local checksum_name="$2"
+
+            if asset_exists "${package_name}"; then
+              use_existing_asset "${package_name}"
+            fi
+            if asset_exists "${checksum_name}"; then
+              use_existing_asset "${checksum_name}"
+            elif asset_exists "${package_name}"; then
+              local package_hash
+              package_hash="$(sha256sum "artifacts/release/${package_name}" | cut -d' ' -f1)"
+              printf '%s  %s\n' "${package_hash}" "${package_name}" \
+                >"artifacts/release/${checksum_name}"
+            fi
+
+            (
+              cd artifacts/release
+              sha256sum --check "${checksum_name}"
+            )
+          }
+
+          reconcile_package_pair "${archive}" "${checksum}"
+          reconcile_package_pair "${msi}" "${msi_checksum}"
+
+          mapfile -t archive_entries < <(unzip -Z1 "artifacts/release/${archive}")
+          if [[ "${#archive_entries[@]}" -ne 1 || \
+                "${archive_entries[0]}" != 'QuotaGlass.exe' ]]; then
+            echo "ZIP must contain only QuotaGlass.exe: ${archive_entries[*]}" >&2
+            exit 1
+          fi
+
           for asset_name in "${archive}" "${checksum}" "${msi}" "${msi_checksum}"; do
             asset_path="artifacts/release/${asset_name}"
-            if jq -e --arg name "${asset_name}" \
-              'any(.assets[]; .name == $name)' <<<"${release_json}" >/dev/null; then
+            if asset_exists "${asset_name}"; then
               download_directory="${compare_root}/${asset_name}"
-              mkdir -p "${download_directory}"
-              gh release download "${RELEASE_TAG}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --pattern "${asset_name}" \
-                --dir "${download_directory}"
               local_hash="$(sha256sum "${asset_path}" | cut -d' ' -f1)"
               remote_hash="$(sha256sum "${download_directory}/${asset_name}" | cut -d' ' -f1)"
               if [[ "${local_hash}" != "${remote_hash}" ]]; then

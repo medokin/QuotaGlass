@@ -11,7 +11,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QuotaGlass.InstallerActions\QuotaGlass.InstallerActions.csproj" />
-    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
   </ItemGroup>
 
   <Target Name="ValidateInstallerInputs" BeforeTargets="BeforeBuild">

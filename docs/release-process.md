@@ -117,9 +117,11 @@ Recovery is intentionally narrow. The workflow requires the tag to match the
 root version in `.release-please-manifest.json`, requires an existing draft
 GitHub Release, and requires the tagged commit to be contained in `master`.
 
-The finalization job safely handles a previous partial upload. It uploads a
-missing asset, accepts an existing asset only when its SHA256 matches the new
-candidate, and fails on a mismatch. It never overwrites an asset. The draft is
+The finalization job safely handles a previous partial upload. An existing ZIP
+or MSI becomes the canonical package for that draft, and an existing checksum
+must verify it. If only a package exists, the workflow creates its missing
+checksum. If only a checksum exists, it must verify the rebuilt package. Missing
+assets are uploaded, existing assets are never overwritten, and the draft is
 published only after its asset list contains exactly the expected ZIP, MSI, and
 their two checksums.
 

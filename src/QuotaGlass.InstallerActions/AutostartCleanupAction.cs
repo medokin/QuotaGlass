@@ -30,6 +30,7 @@ public static class AutostartCleanupAction
         catch (Exception exception)
         {
             session.Log($"Legacy autostart cleanup could not be added: {exception.Message}");
+            return ActionResult.Failure;
         }
 
         return ActionResult.Success;
