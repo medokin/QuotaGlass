@@ -59,11 +59,11 @@ public partial class App : System.Windows.Application
         try
         {
             AppPaths paths = AppPaths.FromEnvironment();
-            _settingsStore = new SettingsStore(paths.SettingsPath);
+            _log = new RollingFileLog(paths.LogPath);
+            _settingsStore = new SettingsStore(paths.SettingsPath, _log);
             AppSettings settings = await _settingsStore.LoadAsync(_applicationCancellation.Token);
             _settingsState = new AppSettingsState(settings);
 
-            _log = new RollingFileLog(paths.LogPath);
             _log.Write(LogArea.Application, LogOutcome.Started);
 
             _providerRegistry = ProviderRegistry.Create(() => _settingsState.Current, paths);

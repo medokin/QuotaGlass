@@ -204,6 +204,64 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_OldProviderDictionaryGainsDefaultsAndPreservesUnknownEntries()
+    {
+        // Break caught: adding a compiled provider rejects an older valid file or deletes unknown entries.
+        AppSettings old = AppSettings.Default with
+        {
+            Providers = ImmutableDictionary<string, ProviderSettings>.Empty
+                .Add("claude", new(false))
+                .Add("codex", new(true))
+                .Add("future-provider", new(false)),
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(old), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+        await _store.SaveAsync(loaded, CancellationToken.None);
+        AppSettings saved = JsonSerializer.Deserialize<AppSettings>(await File.ReadAllTextAsync(_path))!;
+
+        Assert.False(loaded.Providers["claude"].Enabled);
+        Assert.True(loaded.Providers["codex"].Enabled);
+        Assert.True(loaded.Providers["ollama"].Enabled);
+        Assert.False(loaded.Providers["future-provider"].Enabled);
+        Assert.Equal(loaded.Providers.OrderBy(pair => pair.Key), saved.Providers.OrderBy(pair => pair.Key));
+    }
+
+    [Fact]
+    public async Task Changed_MalformedReloadPreservesActiveSettingsAndLogsOnce()
+    {
+        // Break caught: a partially written watched file resets active settings or floods sensitive diagnostics.
+        string logPath = Path.Combine(_directory.Path, "settings.log");
+        using var store = new SettingsStore(
+            _path,
+            TimeSpan.FromMilliseconds(30),
+            new RollingFileLog(logPath));
+        AppSettings active = AppSettings.Default with
+        {
+            Hotkey = "Ctrl+Shift+L",
+            WarningPercent = 70,
+        };
+        await store.SaveAsync(active, CancellationToken.None);
+        int changes = 0;
+        store.Changed += (_, _) => Interlocked.Increment(ref changes);
+
+        await File.WriteAllTextAsync(_path, "{\"secret\":\"credential-value\"", CancellationToken.None);
+        await Task.Delay(500);
+
+        AppSettings updated = await store.UpdateAsync(
+            settings => settings with { OverlayVisible = true },
+            CancellationToken.None);
+        string log = await File.ReadAllTextAsync(logPath);
+
+        Assert.Equal("Ctrl+Shift+L", updated.Hotkey);
+        Assert.Equal(70, updated.WarningPercent);
+        Assert.Equal(0, Volatile.Read(ref changes));
+        Assert.Equal(1, log.Split(" settings invalid", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("secret", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("credential-value", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Changed_ExternalValidWriteRaisesOneDebouncedEvent()
     {
         // Break caught: watcher duplicate notifications expose repeated settings changes to consumers.
@@ -248,12 +306,6 @@ public sealed class SettingsStoreTests : IDisposable
         yield return [AppSettings.Default with { CriticalPercent = 101 }];
         yield return [AppSettings.Default with { PollInterval = TimeSpan.Zero }];
         yield return [AppSettings.Default with { IdleInterval = TimeSpan.FromSeconds(-1) }];
-        yield return [AppSettings.Default with
-        {
-            Providers = ImmutableDictionary<string, ProviderSettings>.Empty
-                .Add("claude", new(true))
-                .Add("codex", new(true)),
-        }];
     }
 
     public void Dispose()
