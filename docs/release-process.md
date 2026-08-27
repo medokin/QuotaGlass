@@ -159,10 +159,20 @@ For a generated release pull request, the trusted Release Please workflow
 verifies the expected title, body, source, target, and three generated files. It
 then creates the required title check on the release pull request commit and
 uses `workflow_dispatch` to run the normal build workflow on that commit.
-GitHub always accepts this dispatch from `GITHUB_TOKEN`, so required checks run
+The `workflow_dispatch` event is an allowed `GITHUB_TOKEN` trigger. The trusted
+workflow waits for the returned run ID and verifies the exact workflow, branch,
+commit, event, bounded jobs, and successful conclusions. GitHub omits these
+dispatched job checks from the pull request rollup, so the trusted workflow
+creates required check-run attestations on the release pull request commit and
+links each attestation to its original job. Required checks therefore run
 without a personal access token. GitHub may also show a duplicate automatic
-pull request run awaiting approval; the trusted dispatched run provides the
+pull request run awaiting approval; the trusted attestations provide the
 required checks, so that duplicate does not need approval.
+
+If the trusted check bridge times out or an API call fails, rerun the failed
+`Release Please` workflow. The push path rediscovers the existing open generated
+pull request, obtains a new build run ID directly from GitHub, and safely
+recreates checks only for that pull request's current verified head SHA.
 
 A GitHub App token or fine-grained personal access token is optional only if
 maintainers later require every automatic pull request event to run unattended.
@@ -187,9 +197,10 @@ merge the generated release pull request, which is the human version and
 changelog gate. If a second trusted maintainer is added, require at least one
 approval and require approval of the latest reviewable push.
 
-The Release Please workflow dispatches the required build checks and creates
-the trusted title check for generated release pull requests. Approval-required
-duplicate runs caused by the automatic pull request event do not block merging.
+The Release Please workflow dispatches and verifies the required build jobs,
+then records their checks and the trusted title check on generated release pull
+requests. Approval-required duplicate runs caused by the automatic pull request
+event do not block merging.
 
 ### Release immutability
 

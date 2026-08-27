@@ -21,7 +21,7 @@ jobs:
   release_please:
     name: Manage release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     permissions:
       actions: write
       checks: write
@@ -44,23 +44,48 @@ jobs:
           target-branch: master
 
       - name: Queue checks for the Release Please pull request
-        if: >-
-          github.event_name == 'push' &&
-          steps.release.outputs.prs_created == 'true'
+        if: github.event_name == 'push'
         shell: bash
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_PRS: ${{ steps.release.outputs.prs }}
         run: |
           set -euo pipefail
 
-          if ! jq -e 'length == 1' <<<"${RELEASE_PRS}" >/dev/null; then
+          release_branch='release-please--branches--master--components--QuotaGlass'
+          if jq -e 'length == 1' <<<"${RELEASE_PRS:-[]}" >/dev/null; then
+            release_prs="${RELEASE_PRS}"
+          else
+            release_prs="$(
+              gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=master&per_page=100" \
+                --slurp \
+                | jq -c \
+                  --arg repo "${GITHUB_REPOSITORY}" \
+                  --arg branch "${release_branch}" \
+                  '[.[][] | select(
+                    .head.repo.full_name == $repo and
+                    .head.ref == $branch and
+                    .base.ref == "master" and
+                    (.title | test("^chore\\(release\\): release [0-9]+\\.[0-9]+\\.[0-9]+$")) and
+                    any(.labels[]?; .name == "autorelease: pending")
+                  ) | {number, headBranchName: .head.ref}]'
+            )"
+          fi
+
+          if jq -e 'length == 0' <<<"${release_prs}" >/dev/null; then
+            echo 'No open Release Please pull request requires checks.'
+            exit 0
+          fi
+
+          if ! jq -e 'length == 1' <<<"${release_prs}" >/dev/null; then
             echo 'Expected exactly one Release Please pull request.' >&2
             exit 1
           fi
 
-          pr_number="$(jq -er '.[0].number' <<<"${RELEASE_PRS}")"
-          expected_branch="$(jq -er '.[0].headBranchName' <<<"${RELEASE_PRS}")"
+          pr_number="$(jq -er '.[0].number' <<<"${release_prs}")"
+          expected_branch="$(jq -er '.[0].headBranchName' <<<"${release_prs}")"
           pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"
           title="$(jq -r '.title' <<<"${pr_json}")"
           body="$(jq -r '.body // ""' <<<"${pr_json}")"
@@ -104,13 +129,72 @@ jobs:
             -f head_sha="${head_sha}" \
             -f status='completed' \
             -f conclusion='success' \
+            -f details_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             -f 'output[title]=Release pull request metadata is valid' \
             -f 'output[summary]=Release Please generated the expected Conventional Commit title, body, and files.' \
             >/dev/null
 
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/dispatches" \
-            -f ref="${head_branch}"
+          build_workflow_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml" \
+              --jq '.id'
+          )"
+          dispatch_json="$(
+            gh api --method POST \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/dispatches" \
+              -F ref="${head_branch}" \
+              -F return_run_details=true
+          )"
+          build_run_id="$(jq -er '.workflow_run_id' <<<"${dispatch_json}")"
+
+          gh run watch "${build_run_id}" --exit-status --interval 10
+          build_run_json="$(
+            gh run view "${build_run_id}" \
+              --json conclusion,event,headBranch,headSha,jobs,url,workflowDatabaseId,workflowName
+          )"
+
+          if [[ "$(jq -r '.conclusion' <<<"${build_run_json}")" != 'success' ||
+                "$(jq -r '.event' <<<"${build_run_json}")" != 'workflow_dispatch' ||
+                "$(jq -r '.headBranch' <<<"${build_run_json}")" != "${head_branch}" ||
+                "$(jq -r '.headSha' <<<"${build_run_json}")" != "${head_sha}" ||
+                "$(jq -r '.workflowDatabaseId' <<<"${build_run_json}")" != "${build_workflow_id}" ||
+                "$(jq -r '.workflowName' <<<"${build_run_json}")" != 'Build' ]]; then
+            echo 'Dispatched build did not succeed on the expected pull request commit.' >&2
+            exit 1
+          fi
+
+          actual_jobs="$(jq -r '.jobs[].name' <<<"${build_run_json}" | sort)"
+          expected_jobs="$(printf '%s\n' \
+            'Build, test, and publish' \
+            'Secret scan' | sort)"
+          if [[ "${actual_jobs}" != "${expected_jobs}" ]]; then
+            echo 'Dispatched build returned an unexpected job set.' >&2
+            printf '%s\n' "${actual_jobs}" >&2
+            exit 1
+          fi
+
+          create_required_check() {
+            local check_name="$1"
+            local job_url
+            job_url="$(
+              jq -er --arg name "${check_name}" \
+                '.jobs[] | select(.name == $name and .conclusion == "success") | .url' \
+                <<<"${build_run_json}"
+            )"
+
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+              -f name="${check_name}" \
+              -f head_sha="${head_sha}" \
+              -f status='completed' \
+              -f conclusion='success' \
+              -f details_url="${job_url}" \
+              -f 'output[title]=Dispatched release pull request check passed' \
+              -f "output[summary]=The trusted build workflow passed ${check_name} on ${head_sha}." \
+              >/dev/null
+          }
+
+          create_required_check 'Secret scan'
+          create_required_check 'Build, test, and publish'
 
       - name: Check out master for recovery
         if: github.event_name == 'workflow_dispatch'
