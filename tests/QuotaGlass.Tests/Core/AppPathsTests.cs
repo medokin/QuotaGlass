@@ -13,5 +13,9 @@ public sealed class AppPathsTests
 
         Assert.Equal("QuotaGlass", Path.GetFileName(settingsDirectory));
         Assert.Equal(settingsDirectory, Path.GetDirectoryName(paths.LogPath));
+        Assert.EndsWith(
+            Path.Combine(".local", "share", "opencode", "auth.json"),
+            paths.OpenCodeAuthPath,
+            StringComparison.OrdinalIgnoreCase);
     }
 }

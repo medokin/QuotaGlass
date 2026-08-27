@@ -5,6 +5,7 @@ namespace QuotaGlass.Core;
 public sealed record AppPaths(
     string ClaudeCredentialsPath,
     string CodexAuthPath,
+    string OpenCodeAuthPath,
     string SettingsPath,
     string LogPath)
 {
@@ -19,6 +20,7 @@ public sealed record AppPaths(
         return new AppPaths(
             Path.Combine(userProfile, ".claude", ".credentials.json"),
             Path.Combine(userProfile, ".codex", "auth.json"),
+            Path.Combine(userProfile, ".local", "share", "opencode", "auth.json"),
             Path.Combine(applicationDirectory, "settings.json"),
             Path.Combine(applicationDirectory, "log.txt"));
     }

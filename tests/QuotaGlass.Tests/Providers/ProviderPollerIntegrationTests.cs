@@ -91,6 +91,40 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task OpenCodeGoOperationalFailuresRetainLastGoodDataUntilRecovery()
+    {
+        // Break caught: an OpenCode Go outage erases account-wide windows instead of using poller retention.
+        int request = 0;
+        var handler = new StubHttpMessageHandler(_ => Interlocked.Increment(ref request) switch
+        {
+            1 => JsonResponse(ReadFixture("opencode-go-usage.json")),
+            2 or 3 or 4 => throw new HttpRequestException("synthetic transport failure"),
+            5 => JsonResponse(ReadFixture("opencode-go-usage.json")),
+            _ => throw new InvalidOperationException("Unexpected HTTP request."),
+        });
+        string credentialPath = _directory.WriteFile(
+            "opencode-auth.json",
+            """
+            {"opencode-go":{"type":"api","key":"unit-test-api-key"}}
+            """);
+        var provider = new OpenCodeGoProvider(credentialPath, handler, SeverityFromPercent);
+        StatusPoller poller = CreatePoller(provider);
+
+        ProviderSnapshot good = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot first = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot second = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot third = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot recovered = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        AssertRetained(good, first, HealthState.Ok, 1);
+        AssertRetained(good, second, HealthState.Ok, 2);
+        AssertRetained(good, third, HealthState.Degraded, 3);
+        Assert.True(good.Windows.SequenceEqual(recovered.Windows));
+        Assert.Equal(HealthState.Ok, recovered.Health);
+        Assert.Equal(0, recovered.ConsecutiveFailures);
+    }
+
+    [Fact]
     public async Task TransientIncompleteClaudeCredentialUsesPollerRetentionBoundary()
     {
         // Break caught: a credential rotation window publishes an empty snapshot instead of retaining last-good data.

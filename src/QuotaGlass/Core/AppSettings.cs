@@ -34,6 +34,7 @@ public sealed record AppSettings(
         ImmutableDictionary<string, ProviderSettings>.Empty
             .Add("claude", new(true))
             .Add("codex", new(true))
+            .Add("opencode-go", new(true))
             .Add("ollama", new(true)),
         false,
         OverlayCorner.BottomRight,

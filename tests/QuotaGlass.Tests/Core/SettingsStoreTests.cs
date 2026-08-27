@@ -29,7 +29,27 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(80, settings.WarningPercent);
         Assert.Equal(95, settings.CriticalPercent);
         Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
+        Assert.True(settings.Providers["opencode-go"].Enabled);
         Assert.All(settings.Providers.Values, provider => Assert.True(provider.Enabled));
+    }
+
+    [Fact]
+    public async Task LoadAsync_PreOpenCodeSettingsAddsEnabledOpenCodeGoProvider()
+    {
+        // Catches a settings schema addition that discards existing settings or leaves the provider unavailable.
+        AppSettings previous = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.Remove("opencode-go"),
+            OverlayVisible = true,
+            WarningPercent = 75,
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(previous), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        Assert.True(loaded.Providers["opencode-go"].Enabled);
+        Assert.True(loaded.OverlayVisible);
+        Assert.Equal(75, loaded.WarningPercent);
     }
 
     [Fact]
