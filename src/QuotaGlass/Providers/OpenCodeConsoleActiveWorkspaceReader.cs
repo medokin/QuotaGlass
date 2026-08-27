@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Text.Json;
 
 namespace QuotaGlass.Providers;
@@ -10,9 +9,20 @@ internal sealed record OpenCodeConsoleActiveWorkspace(
     string OrganizationId,
     DateTimeOffset? ExpiresAt);
 
+internal enum OpenCodeConsoleActiveWorkspaceReadOutcome
+{
+    Success,
+    TransientFailure,
+    InvalidResponse,
+}
+
+internal sealed record OpenCodeConsoleActiveWorkspaceReadResult(
+    OpenCodeConsoleActiveWorkspaceReadOutcome Outcome,
+    OpenCodeConsoleActiveWorkspace? Workspace = null);
+
 internal interface IOpenCodeConsoleActiveWorkspaceReader
 {
-    Task<OpenCodeConsoleActiveWorkspace?> ReadAsync(CancellationToken cancellationToken);
+    Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(CancellationToken cancellationToken);
 }
 
 internal sealed class OpenCodeConsoleActiveWorkspaceReader : IOpenCodeConsoleActiveWorkspaceReader
@@ -36,19 +46,19 @@ internal sealed class OpenCodeConsoleActiveWorkspaceReader : IOpenCodeConsoleAct
         _runQuery = runQuery;
     }
 
-    public async Task<OpenCodeConsoleActiveWorkspace?> ReadAsync(
+    public async Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(
         CancellationToken cancellationToken)
     {
         byte[]? output = await _runQuery(ActiveWorkspaceQuery, cancellationToken)
             .ConfigureAwait(false);
         if (output is null)
         {
-            return null;
+            return new(OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure);
         }
 
         if (output.Length > ProviderHttpSafety.MaximumJsonBytes)
         {
-            throw InvalidOutput();
+            return new(OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse);
         }
 
         JsonDocument document;
@@ -58,31 +68,31 @@ internal sealed class OpenCodeConsoleActiveWorkspaceReader : IOpenCodeConsoleAct
         }
         catch (JsonException)
         {
-            throw InvalidOutput();
+            return new(OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse);
         }
 
         using (document)
         {
             if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
-                throw InvalidOutput();
+                return new(OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse);
             }
 
             int count = document.RootElement.GetArrayLength();
             if (count == 0)
             {
-                return null;
+                return new(OpenCodeConsoleActiveWorkspaceReadOutcome.Success);
             }
 
             if (count != 1)
             {
-                throw InvalidOutput();
+                return new(OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse);
             }
 
             JsonElement row = document.RootElement[0];
             return TryReadWorkspace(row, out OpenCodeConsoleActiveWorkspace? workspace)
-                ? workspace
-                : null;
+                ? new(OpenCodeConsoleActiveWorkspaceReadOutcome.Success, workspace)
+                : new(OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse);
         }
     }
 
@@ -137,7 +147,4 @@ internal sealed class OpenCodeConsoleActiveWorkspaceReader : IOpenCodeConsoleAct
             element.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(value = element.GetString());
     }
-
-    private static InvalidDataException InvalidOutput() =>
-        new("OpenCode active workspace discovery returned invalid data.");
 }

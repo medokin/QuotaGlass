@@ -187,8 +187,10 @@ public sealed class OpenCodeCompanySeatProviderTests
     private sealed class StubWorkspaceReader(Func<OpenCodeConsoleActiveWorkspace?> read)
         : IOpenCodeConsoleActiveWorkspaceReader
     {
-        public Task<OpenCodeConsoleActiveWorkspace?> ReadAsync(CancellationToken cancellationToken) =>
-            Task.FromResult(read());
+        public Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(
+            CancellationToken cancellationToken) => Task.FromResult(new OpenCodeConsoleActiveWorkspaceReadResult(
+                OpenCodeConsoleActiveWorkspaceReadOutcome.Success,
+                read()));
     }
 
     private sealed class StubCompanySeatClient(Func<OpenCodeCompanySeatFetchResult> fetch)

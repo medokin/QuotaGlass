@@ -39,6 +39,16 @@ internal interface IOpenCodeCompanySeatClient
 
 internal sealed class OpenCodeCompanySeatClient : IOpenCodeCompanySeatClient
 {
+    private static readonly string[] UtcResetZuluFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+    ];
+    private static readonly string[] UtcResetOffsetFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:sszzz",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
+    ];
     private static readonly Uri CurrentOrganizationUri =
         new("https://opencode.ai/console/api/orgs/current");
     private static readonly Uri MemberBudgetsBaseUri =
@@ -274,12 +284,10 @@ internal sealed class OpenCodeCompanySeatClient : IOpenCodeCompanySeatClient
             return true;
         }
 
-        if (element.ValueKind != JsonValueKind.String ||
-            !DateTimeOffset.TryParse(
-                element.GetString(),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out DateTimeOffset parsed) ||
+        string? value = element.ValueKind == JsonValueKind.String
+            ? element.GetString()
+            : null;
+        if (!TryParseUtcReset(value, out DateTimeOffset parsed) ||
             parsed <= now)
         {
             return false;
@@ -287,6 +295,29 @@ internal sealed class OpenCodeCompanySeatClient : IOpenCodeCompanySeatClient
 
         resetsAt = parsed;
         return true;
+    }
+
+    private static bool TryParseUtcReset(string? value, out DateTimeOffset parsed)
+    {
+        parsed = default;
+        if (value?.EndsWith("Z", StringComparison.Ordinal) == true)
+        {
+            return DateTimeOffset.TryParseExact(
+                value,
+                UtcResetZuluFormats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out parsed);
+        }
+
+        return value?.EndsWith("+00:00", StringComparison.Ordinal) == true &&
+            DateTimeOffset.TryParseExact(
+                value,
+                UtcResetOffsetFormats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out parsed) &&
+            parsed.Offset == TimeSpan.Zero;
     }
 
     private static bool TryReadSource(JsonElement root, out string? source)

@@ -89,6 +89,24 @@ public sealed class OpenCodeCompanySeatClientTests
     }
 
     [Theory]
+    [InlineData("2026-09-27T00:00:00.123Z")]
+    [InlineData("2026-09-27T00:00:00+00:00")]
+    public async Task FetchAsync_AcceptsExplicitUtcResetFormats(string resetsAt)
+    {
+        OpenCodeCompanySeatClient client = ClientWithBudget(
+            $$"""
+            {"scope":"user","userId":"member-current","limitMicroCents":"100000000","spentMicroCents":"25000000","exceeded":false,"resetsAt":"{{resetsAt}}","source":"custom"}
+            """);
+
+        OpenCodeCompanySeatFetchResult result = await client.FetchAsync(
+            Workspace,
+            CancellationToken.None);
+
+        Assert.Equal(OpenCodeCompanySeatFetchOutcome.Success, result.Outcome);
+        Assert.Equal(TimeSpan.Zero, result.Budget!.ResetsAt!.Value.Offset);
+    }
+
+    [Theory]
     [InlineData("{\"scope\":\"org\",\"userId\":\"member-current\",\"spentMicroCents\":\"1\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00Z\"}")]
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-other\",\"spentMicroCents\":\"1\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00Z\"}")]
     [InlineData("{\"userId\":\"member-current\",\"spentMicroCents\":\"1\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00Z\"}")]
@@ -152,6 +170,10 @@ public sealed class OpenCodeCompanySeatClientTests
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"-1\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00Z\"}")]
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"resetsAt\":\"2026-09-27T00:00:00Z\"}")]
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"not-a-time\"}")]
+    [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"2026-09-27\"}")]
+    [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00\"}")]
+    [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T01:00:00+01:00\"}")]
+    [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"09/27/2026 00:00:00 +00:00\"}")]
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"2026-08-27T11:59:59Z\"}")]
     [InlineData("{\"scope\":\"user\",\"userId\":\"member-current\",\"spentMicroCents\":\"0\",\"exceeded\":false,\"resetsAt\":\"2026-09-27T00:00:00Z\",\"source\":\"organization\"}")]
     public async Task FetchAsync_InvalidBudgetFieldsReturnSanitizedInvalidResponse(string budgetJson)
@@ -236,13 +258,17 @@ public sealed class OpenCodeCompanySeatClientTests
     public async Task FetchAsync_CancellationStopsTheActiveRequest()
     {
         // Catches OpenCode requests surviving provider cancellation or application shutdown.
-        var client = new OpenCodeCompanySeatClient(
-            new BlockingHandler(),
-            new FixedTimeProvider(Now));
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        var handler = new BlockingHandler();
+        var client = new OpenCodeCompanySeatClient(handler, new FixedTimeProvider(Now));
+        using var cancellation = new CancellationTokenSource();
 
+        Task<OpenCodeCompanySeatFetchResult> fetch = client.FetchAsync(
+            Workspace,
+            cancellation.Token);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => client.FetchAsync(Workspace, cancellation.Token));
+            () => fetch.WaitAsync(TimeSpan.FromSeconds(1)));
     }
 
     private static OpenCodeCompanySeatClient ClientWithBudget(string budgetJson)
@@ -267,10 +293,14 @@ public sealed class OpenCodeCompanySeatClientTests
 
     private sealed class BlockingHandler : HttpMessageHandler
     {
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            Started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("The blocking request unexpectedly completed.");
         }

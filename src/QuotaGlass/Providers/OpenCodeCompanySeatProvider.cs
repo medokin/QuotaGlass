@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Globalization;
-using System.IO;
 using System.Net.Http;
 using System.Numerics;
 using System.Security.Cryptography;
@@ -9,7 +8,7 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class OpenCodeCompanySeatProvider : IStatusProvider
+public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionScopedStatusProvider
 {
     private static readonly BigInteger MicroCentsPerCent = new(1_000_000);
     private const int PercentageScale = 1_000_000;
@@ -19,8 +18,7 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
     private readonly IOpenCodeConsoleActiveWorkspaceReader _workspaceReader;
     private readonly IOpenCodeCompanySeatClient _client;
     private readonly object _selectionGate = new();
-    private bool _hasSelection;
-    private string? _selectionKey;
+    private ProviderRetentionScope _retentionScope = ProviderRetentionScope.Unknown;
 
     public OpenCodeCompanySeatProvider(
         HttpMessageHandler handler,
@@ -53,20 +51,32 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
 
     public string Label => "OpenCode";
 
+    ProviderRetentionScope IRetentionScopedStatusProvider.RetentionScope
+    {
+        get
+        {
+            lock (_selectionGate)
+            {
+                return _retentionScope;
+            }
+        }
+    }
+
     public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
-        OpenCodeConsoleActiveWorkspace? workspace;
-        try
+        OpenCodeConsoleActiveWorkspaceReadResult workspaceResult = await ReadWorkspaceAsync(
+            cancellationToken).ConfigureAwait(false);
+        if (workspaceResult.Outcome != OpenCodeConsoleActiveWorkspaceReadOutcome.Success)
         {
-            workspace = await _workspaceReader.ReadAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidDataException)
-        {
-            return new ProviderFetchResult(ProviderFetchOutcome.InvalidResponse);
+            return new ProviderFetchResult(
+                workspaceResult.Outcome == OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse
+                    ? ProviderFetchOutcome.InvalidResponse
+                    : ProviderFetchOutcome.TransientFailure,
+                preserveLastGoodData: false);
         }
 
-        bool selectionChanged = RememberSelection(workspace);
+        OpenCodeConsoleActiveWorkspace? workspace = workspaceResult.Workspace;
         if (workspace is null)
         {
             return new ProviderFetchResult(
@@ -89,16 +99,30 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
             .ConfigureAwait(false);
         if (result.Outcome != OpenCodeCompanySeatFetchOutcome.Success)
         {
-            return MapFailure(result, fetchedAt, selectionChanged);
+            return MapFailure(result, fetchedAt);
         }
 
-        return BuildSuccess(result.Budget, fetchedAt, selectionChanged);
+        return BuildSuccess(result.Budget, fetchedAt);
+    }
+
+    async Task<ProviderRetentionScopeRefreshOutcome> IRetentionScopedStatusProvider
+        .RefreshRetentionScopeAsync(CancellationToken cancellationToken)
+    {
+        OpenCodeConsoleActiveWorkspaceReadResult result = await ReadWorkspaceAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return result.Outcome switch
+        {
+            OpenCodeConsoleActiveWorkspaceReadOutcome.Success =>
+                ProviderRetentionScopeRefreshOutcome.Success,
+            OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure =>
+                ProviderRetentionScopeRefreshOutcome.TransientFailure,
+            _ => ProviderRetentionScopeRefreshOutcome.InvalidResponse,
+        };
     }
 
     private ProviderFetchResult BuildSuccess(
         OpenCodeCompanySeatBudget? budget,
-        DateTimeOffset fetchedAt,
-        bool selectionChanged)
+        DateTimeOffset fetchedAt)
     {
         if (budget is null)
         {
@@ -147,8 +171,7 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
             out double calculated))
         {
             return new ProviderFetchResult(
-                ProviderFetchOutcome.InvalidResponse,
-                preserveLastGoodData: !selectionChanged);
+                ProviderFetchOutcome.InvalidResponse);
         }
         else
         {
@@ -168,8 +191,7 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
 
     private static ProviderFetchResult MapFailure(
         OpenCodeCompanySeatFetchResult result,
-        DateTimeOffset fetchedAt,
-        bool selectionChanged) => result.Outcome switch
+        DateTimeOffset fetchedAt) => result.Outcome switch
         {
             OpenCodeCompanySeatFetchOutcome.AuthenticationRequired => AuthenticationRequired(
                 fetchedAt,
@@ -177,16 +199,13 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
             OpenCodeCompanySeatFetchOutcome.RateLimited => new ProviderFetchResult(
                 ProviderFetchOutcome.RateLimited,
                 statusCode: result.StatusCode,
-                retryAfter: result.RetryAfter,
-                preserveLastGoodData: !selectionChanged),
+                retryAfter: result.RetryAfter),
             OpenCodeCompanySeatFetchOutcome.InvalidResponse => new ProviderFetchResult(
                 ProviderFetchOutcome.InvalidResponse,
-                statusCode: result.StatusCode,
-                preserveLastGoodData: !selectionChanged),
+                statusCode: result.StatusCode),
             _ => new ProviderFetchResult(
                 ProviderFetchOutcome.TransientFailure,
-                statusCode: result.StatusCode,
-                preserveLastGoodData: !selectionChanged),
+                statusCode: result.StatusCode),
         };
 
     private static ProviderFetchResult AuthenticationRequired(
@@ -228,21 +247,33 @@ public sealed class OpenCodeCompanySeatProvider : IStatusProvider
             $"USD {dollars}.{centRemainder:D2}");
     }
 
-    private bool RememberSelection(OpenCodeConsoleActiveWorkspace? workspace)
+    private async Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadWorkspaceAsync(
+        CancellationToken cancellationToken)
     {
-        string? selectionKey = workspace is null
+        SetRetentionScope(ProviderRetentionScope.Unknown);
+        OpenCodeConsoleActiveWorkspaceReadResult result = await _workspaceReader
+            .ReadAsync(cancellationToken)
+            .ConfigureAwait(false);
+        ProviderRetentionScope scope = result.Outcome == OpenCodeConsoleActiveWorkspaceReadOutcome.Success
+            ? ProviderRetentionScope.Known(CreateSelectionKey(result.Workspace))
+            : ProviderRetentionScope.Unknown;
+        SetRetentionScope(scope);
+        return result;
+    }
+
+    private void SetRetentionScope(ProviderRetentionScope scope)
+    {
+        lock (_selectionGate)
+        {
+            _retentionScope = scope;
+        }
+    }
+
+    private static string? CreateSelectionKey(OpenCodeConsoleActiveWorkspace? workspace) =>
+        workspace is null
             ? null
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
                 workspace.AccountId + "\0" + workspace.OrganizationId)));
-        lock (_selectionGate)
-        {
-            bool changed = _hasSelection &&
-                !string.Equals(_selectionKey, selectionKey, StringComparison.Ordinal);
-            _selectionKey = selectionKey;
-            _hasSelection = true;
-            return changed;
-        }
-    }
 
     private static ProviderSnapshot Snapshot(
         HealthState health,

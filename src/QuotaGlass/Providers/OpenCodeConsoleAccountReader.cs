@@ -196,7 +196,7 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         };
         startInfo.ArgumentList.Add("/d");
         startInfo.ArgumentList.Add("/c");
-        startInfo.ArgumentList.Add("opencode.cmd");
+        startInfo.ArgumentList.Add("opencode");
         startInfo.ArgumentList.Add("db");
         startInfo.ArgumentList.Add(query);
         startInfo.ArgumentList.Add("--format");

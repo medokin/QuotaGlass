@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using QuotaGlass.Model;
 using QuotaGlass.Ui;
@@ -32,6 +33,7 @@ public sealed class UiConstructionSmokeTests
                 failure = exception;
             }
         });
+        thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "The STA construction thread did not finish.");
@@ -60,7 +62,7 @@ public sealed class UiConstructionSmokeTests
                         [new UsageWindow(
                             "monthly budget",
                             25,
-                            new DateTimeOffset(2026, 9, 27, 0, 0, 0, TimeSpan.Zero),
+                            DateTimeOffset.UtcNow.AddDays(30),
                             Severity.Normal)],
                         [
                             new InfoLine("Spend", "USD 2.50"),
@@ -74,7 +76,9 @@ public sealed class UiConstructionSmokeTests
                 card.Arrange(new Rect(0, 0, 360, card.DesiredSize.Height));
                 card.UpdateLayout();
                 visibleText = Descendants<TextBlock>(card)
-                    .Select(textBlock => textBlock.Text)
+                    .Select(textBlock => new TextRange(
+                        textBlock.ContentStart,
+                        textBlock.ContentEnd).Text.Trim())
                     .Where(text => !string.IsNullOrWhiteSpace(text))
                     .ToArray();
             }
@@ -83,6 +87,7 @@ public sealed class UiConstructionSmokeTests
                 failure = exception;
             }
         });
+        thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "The STA rendering thread did not finish.");
@@ -91,6 +96,8 @@ public sealed class UiConstructionSmokeTests
         Assert.Contains("OpenCode", visibleText);
         Assert.Contains("Company Seat", visibleText);
         Assert.Contains("monthly budget", visibleText);
+        Assert.Contains("25%", visibleText);
+        Assert.Contains(visibleText, text => text.StartsWith("resets ", StringComparison.Ordinal));
         Assert.Contains("Spend", visibleText);
         Assert.Contains("USD 2.50", visibleText);
         Assert.Contains("Budget", visibleText);

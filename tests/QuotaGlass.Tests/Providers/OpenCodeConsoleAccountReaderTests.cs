@@ -21,7 +21,7 @@ public sealed class OpenCodeConsoleAccountReaderTests
         Assert.True(startInfo.RedirectStandardError);
         Assert.True(startInfo.CreateNoWindow);
         Assert.Equal(
-            ["/d", "/c", "opencode.cmd", "db", query, "--format", "json"],
+            ["/d", "/c", "opencode", "db", query, "--format", "json"],
             startInfo.ArgumentList);
     }
 
