@@ -1,0 +1,235 @@
+using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Text.Json;
+
+namespace QuotaGlass.Providers;
+
+internal sealed record OpenCodeConsoleAccount(
+    string AccountId,
+    string AccessToken,
+    DateTimeOffset? ExpiresAt);
+
+internal interface IOpenCodeConsoleAccountReader
+{
+    Task<ImmutableArray<OpenCodeConsoleAccount>> ReadAsync(CancellationToken cancellationToken);
+}
+
+internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountReader
+{
+    private const int MaximumAccounts = 32;
+    private const string ConsoleUrl = "https://opencode.ai/console";
+    private const string AccountQuery =
+        "select a.id, a.url, a.access_token, a.token_expiry " +
+        "from account a order by a.id limit 33;";
+
+    private readonly Func<string, CancellationToken, Task<byte[]?>> _runQuery;
+
+    public OpenCodeConsoleAccountReader()
+        : this(RunQueryAsync)
+    {
+    }
+
+    internal OpenCodeConsoleAccountReader(
+        Func<string, CancellationToken, Task<byte[]?>> runQuery)
+    {
+        _runQuery = runQuery;
+    }
+
+    public async Task<ImmutableArray<OpenCodeConsoleAccount>> ReadAsync(
+        CancellationToken cancellationToken)
+    {
+        byte[]? output = await _runQuery(AccountQuery, cancellationToken).ConfigureAwait(false);
+        if (output is null)
+        {
+            return [];
+        }
+
+        if (output.Length > ProviderHttpSafety.MaximumJsonBytes)
+        {
+            throw InvalidOutput();
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(output);
+        }
+        catch (JsonException)
+        {
+            throw InvalidOutput();
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                throw InvalidOutput();
+            }
+
+            int rowCount = document.RootElement.GetArrayLength();
+            if (rowCount > MaximumAccounts)
+            {
+                throw InvalidOutput();
+            }
+
+            var accounts = ImmutableArray.CreateBuilder<OpenCodeConsoleAccount>(rowCount);
+            foreach (JsonElement row in document.RootElement.EnumerateArray())
+            {
+                if (!TryReadAccount(row, out OpenCodeConsoleAccount? account))
+                {
+                    continue;
+                }
+
+                accounts.Add(account);
+            }
+
+            return accounts.ToImmutable();
+        }
+    }
+
+    private static bool TryReadAccount(
+        JsonElement row,
+        [NotNullWhen(true)] out OpenCodeConsoleAccount? account)
+    {
+        account = null;
+        if (row.ValueKind != JsonValueKind.Object ||
+            !TryReadString(row, "id", out string? accountId) ||
+            !TryReadString(row, "url", out string? url) ||
+            !TryReadString(row, "access_token", out string? accessToken) ||
+            !string.Equals(url, ConsoleUrl, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        DateTimeOffset? expiresAt = null;
+        if (row.TryGetProperty("token_expiry", out JsonElement expiry) &&
+            expiry.ValueKind != JsonValueKind.Null)
+        {
+            if (expiry.ValueKind != JsonValueKind.Number ||
+                !expiry.TryGetInt64(out long milliseconds))
+            {
+                return false;
+            }
+
+            try
+            {
+                expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return false;
+            }
+        }
+
+        account = new OpenCodeConsoleAccount(accountId, accessToken, expiresAt);
+        return true;
+    }
+
+    private static bool TryReadString(
+        JsonElement row,
+        string propertyName,
+        [NotNullWhen(true)] out string? value)
+    {
+        value = null;
+        return row.TryGetProperty(propertyName, out JsonElement element) &&
+            element.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(value = element.GetString());
+    }
+
+    private static async Task<byte[]?> RunQueryAsync(
+        string query,
+        CancellationToken cancellationToken)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "opencode",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            },
+        };
+        process.StartInfo.ArgumentList.Add("db");
+        process.StartInfo.ArgumentList.Add(query);
+        process.StartInfo.ArgumentList.Add("--format");
+        process.StartInfo.ArgumentList.Add("json");
+
+        try
+        {
+            if (!process.Start())
+            {
+                return null;
+            }
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            return null;
+        }
+
+        Task<byte[]> stdout = ReadBoundedAsync(process.StandardOutput.BaseStream, cancellationToken);
+        Task stderr = process.StandardError.BaseStream.CopyToAsync(Stream.Null, cancellationToken);
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            byte[] output = await stdout.ConfigureAwait(false);
+            await stderr.ConfigureAwait(false);
+            return process.ExitCode == 0 ? output : null;
+        }
+        catch
+        {
+            TryKill(process);
+            throw;
+        }
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        using var output = new MemoryStream();
+        byte[] buffer = new byte[81920];
+        bool oversized = false;
+        while (true)
+        {
+            int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            if (!oversized && output.Length + read <= ProviderHttpSafety.MaximumJsonBytes)
+            {
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                oversized = true;
+            }
+        }
+
+        return oversized ? throw InvalidOutput() : output.ToArray();
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static InvalidDataException InvalidOutput() =>
+        new("OpenCode account discovery returned invalid data.");
+}
