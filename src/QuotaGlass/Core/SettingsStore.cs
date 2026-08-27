@@ -76,7 +76,10 @@ public sealed class SettingsStore : IDisposable
             {
                 ThrowIfDisposed();
                 _current = loaded;
-                _invalidReloadReported = false;
+                if (isValid)
+                {
+                    _invalidReloadReported = false;
+                }
             }
 
             return loaded;

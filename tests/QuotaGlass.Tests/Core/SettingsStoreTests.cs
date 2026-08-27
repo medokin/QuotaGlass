@@ -424,6 +424,31 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_InvalidFileDoesNotRearmDuplicateWatcherLog()
+    {
+        // Break caught: manually loading the same malformed state re-arms duplicate watcher diagnostics.
+        string logPath = Path.Combine(_directory.Path, "settings.log");
+        await File.WriteAllTextAsync(
+            _path,
+            JsonSerializer.Serialize(AppSettings.Default),
+            CancellationToken.None);
+        using var store = new SettingsStore(
+            _path,
+            TimeSpan.FromMilliseconds(30),
+            new RollingFileLog(logPath));
+        await store.LoadAsync(CancellationToken.None);
+
+        await File.WriteAllTextAsync(_path, "{\"invalid\":", CancellationToken.None);
+        await Task.Delay(500);
+        await store.LoadAsync(CancellationToken.None);
+        await File.AppendAllTextAsync(_path, " ", CancellationToken.None);
+        await Task.Delay(500);
+
+        string log = await File.ReadAllTextAsync(logPath);
+        Assert.Equal(1, log.Split(" settings invalid", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public async Task Changed_ExternalValidWriteRaisesOneDebouncedEvent()
     {
         // Break caught: watcher duplicate notifications expose repeated settings changes to consumers.
