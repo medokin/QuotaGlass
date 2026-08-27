@@ -55,32 +55,71 @@ public sealed class CodexProvider : IStatusProvider
             bufferSize: 1,
             FileOptions.SequentialScan);
 
-    public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
+    public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
-        Credential credential = ReadCredential();
+        Credential credential;
+        try
+        {
+            credential = ReadCredential();
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.NotConfigured,
+                Snapshot(HealthState.Unreachable, null, [], null, fetchedAt));
+        }
+
         using var client = new HttpClient(_handler, disposeHandler: false);
         using HttpResponseMessage response = await SendAsync(client, credential, cancellationToken)
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            return Snapshot(HealthState.AuthExpired, null, [], "re-auth: run codex login", fetchedAt);
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.AuthenticationRequired,
+                Snapshot(HealthState.AuthExpired, null, [], "re-auth: run codex login", fetchedAt),
+                response.StatusCode);
         }
 
-        response.EnsureSuccessStatusCode();
-        if (!IsJson(response))
+        TimeSpan? retryAfter = ProviderHttpSafety.GetRetryAfter(response, fetchedAt);
+        if (retryAfter is not null)
         {
-            return Snapshot(HealthState.Degraded, null, [], "Codex usage endpoint returned non-JSON content", fetchedAt);
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.RateLimited,
+                statusCode: response.StatusCode,
+                retryAfter: retryAfter);
         }
 
-        using JsonDocument usage = JsonDocument.Parse(
-            await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
-        return Snapshot(
-            HealthState.Ok,
-            TryGetString(usage.RootElement, "plan_type"),
-            ReadWindows(usage.RootElement),
-            null,
-            fetchedAt);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.TransientFailure,
+                statusCode: response.StatusCode);
+        }
+
+        JsonDocument usage;
+        try
+        {
+            usage = await ProviderHttpSafety.ReadJsonAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.InvalidResponse,
+                statusCode: response.StatusCode);
+        }
+
+        using (usage)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.Success,
+                Snapshot(
+                    HealthState.Ok,
+                    TryGetString(usage.RootElement, "plan_type"),
+                    ReadWindows(usage.RootElement),
+                    null,
+                    fetchedAt));
+        }
     }
 
     private Credential ReadCredential()
@@ -167,9 +206,6 @@ public sealed class CodexProvider : IStatusProvider
         _ when seconds % 3_600 == 0 => $"{seconds / 3_600}h",
         _ => $"{seconds}s"
     };
-
-    private static bool IsJson(HttpResponseMessage response) =>
-        string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase);
 
     private static JsonElement? TryGetObject(JsonElement element, string propertyName) =>
         TryGetProperty(element, propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.Object

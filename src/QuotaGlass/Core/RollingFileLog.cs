@@ -1,5 +1,6 @@
 using System.Text;
 using System.IO;
+using QuotaGlass.Providers;
 
 namespace QuotaGlass.Core;
 
@@ -44,7 +45,15 @@ public sealed class RollingFileLog
         Directory.CreateDirectory(directory);
     }
 
-    public void Write(LogArea area, LogOutcome outcome, int? statusCode = null, Exception? exception = null)
+    public void Write(
+        LogArea area,
+        LogOutcome outcome,
+        int? statusCode = null,
+        Exception? exception = null,
+        string? providerId = null,
+        ProviderFetchOutcome? providerOutcome = null,
+        int? cooldownSeconds = null,
+        int? consecutiveFailures = null)
     {
         if (!Enum.IsDefined(area))
         {
@@ -56,7 +65,35 @@ public sealed class RollingFileLog
             throw new ArgumentOutOfRangeException(nameof(outcome));
         }
 
-        string line = FormatLine(ToToken(area), ToToken(outcome), statusCode, exception);
+        if (providerId is not null && !IsSafeProviderId(providerId))
+        {
+            throw new ArgumentException("Provider ID must be a safe lowercase token.", nameof(providerId));
+        }
+
+        if (providerOutcome is ProviderFetchOutcome fetchOutcome && !Enum.IsDefined(fetchOutcome))
+        {
+            throw new ArgumentOutOfRangeException(nameof(providerOutcome));
+        }
+
+        if (cooldownSeconds is < 0 or > 3600)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cooldownSeconds));
+        }
+
+        if (consecutiveFailures is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(consecutiveFailures));
+        }
+
+        string line = FormatLine(
+            ToToken(area),
+            ToToken(outcome),
+            statusCode,
+            exception,
+            providerId,
+            providerOutcome,
+            cooldownSeconds,
+            consecutiveFailures);
         byte[] bytes = Encoding.UTF8.GetBytes(line);
 
         lock (_gate)
@@ -81,7 +118,15 @@ public sealed class RollingFileLog
         return Path.Combine(directory, name + ".1" + extension);
     }
 
-    private static string FormatLine(string area, string outcome, int? statusCode, Exception? exception)
+    private static string FormatLine(
+        string area,
+        string outcome,
+        int? statusCode,
+        Exception? exception,
+        string? providerId,
+        ProviderFetchOutcome? providerOutcome,
+        int? cooldownSeconds,
+        int? consecutiveFailures)
     {
         string prefix = new StringBuilder()
             .Append(DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
@@ -91,9 +136,29 @@ public sealed class RollingFileLog
             .ToString();
         var suffix = new StringBuilder();
 
+        if (providerId is not null)
+        {
+            suffix.Append(" provider=").Append(providerId);
+        }
+
+        if (providerOutcome is ProviderFetchOutcome fetchOutcome)
+        {
+            suffix.Append(" fetch-outcome=").Append(ToToken(fetchOutcome));
+        }
+
         if (statusCode is int code)
         {
             suffix.Append(" status=").Append(code);
+        }
+
+        if (cooldownSeconds is int seconds)
+        {
+            suffix.Append(" cooldown-seconds=").Append(seconds);
+        }
+
+        if (consecutiveFailures is int failures)
+        {
+            suffix.Append(" consecutive-failures=").Append(failures);
         }
 
         if (exception is not null)
@@ -163,4 +228,20 @@ public sealed class RollingFileLog
             _ => throw new InvalidOperationException("Validated log outcome was not mapped."),
         };
     }
+
+    private static string ToToken(ProviderFetchOutcome outcome) => outcome switch
+    {
+        ProviderFetchOutcome.Success => "success",
+        ProviderFetchOutcome.PartialSuccess => "partial-success",
+        ProviderFetchOutcome.NotConfigured => "not-configured",
+        ProviderFetchOutcome.AuthenticationRequired => "authentication-required",
+        ProviderFetchOutcome.TransientFailure => "transient-failure",
+        ProviderFetchOutcome.RateLimited => "rate-limited",
+        ProviderFetchOutcome.InvalidResponse => "invalid-response",
+        _ => throw new InvalidOperationException("Validated provider outcome was not mapped."),
+    };
+
+    private static bool IsSafeProviderId(string providerId) =>
+        providerId.Length is > 0 and <= 64 &&
+        providerId.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 }
