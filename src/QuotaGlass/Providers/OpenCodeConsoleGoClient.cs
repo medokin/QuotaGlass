@@ -210,9 +210,9 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
         }
 
         var result = ImmutableArray.CreateBuilder<UsageWindow>(3);
-        if (!TryAddWindow(meters, "fiveHour", "rolling", null, result) ||
-            !TryAddWindow(meters, "week", "weekly", null, result) ||
-            !TryAddWindow(meters, "month", "monthly", monthReset, result))
+        if (!TryAddWindow(meters, "fiveHour", "rolling", "resetsAt", null, true, result) ||
+            !TryAddWindow(meters, "week", "weekly", "resetsAt", null, false, result) ||
+            !TryAddWindow(meters, "month", "monthly", null, monthReset, false, result))
         {
             return false;
         }
@@ -225,7 +225,9 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
         JsonElement meters,
         string propertyName,
         string label,
+        string? resetPropertyName,
         DateTimeOffset? fixedReset,
+        bool allowNullReset,
         ImmutableArray<UsageWindow>.Builder windows)
     {
         if (!meters.TryGetProperty(propertyName, out JsonElement meter) ||
@@ -237,23 +239,52 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
             return false;
         }
 
-        DateTimeOffset reset;
-        if (fixedReset is DateTimeOffset value)
+        DateTimeOffset? reset;
+        if (resetPropertyName is null)
         {
-            reset = value;
+            reset = fixedReset;
         }
-        else if (!TryReadTimestamp(meter, "resetsAt", out reset))
+        else if (!TryReadOptionalTimestamp(meter, resetPropertyName, allowNullReset, out reset))
         {
             return false;
         }
 
-        double percent = 100d * (double)used / (double)limit;
+        const int percentageScale = 1_000_000;
+        BigInteger scaledPercent = used * (100 * percentageScale) / limit;
+        double percent = (double)scaledPercent / percentageScale;
         if (!double.IsFinite(percent) || percent < 0)
         {
             return false;
         }
 
         windows.Add(new UsageWindow(label, percent, reset, _severityFromPercent(percent)));
+        return true;
+    }
+
+    private static bool TryReadOptionalTimestamp(
+        JsonElement parent,
+        string propertyName,
+        bool allowNull,
+        out DateTimeOffset? timestamp)
+    {
+        timestamp = null;
+        if (!parent.TryGetProperty(propertyName, out JsonElement element) ||
+            element.ValueKind == JsonValueKind.Null)
+        {
+            return allowNull;
+        }
+
+        if (element.ValueKind != JsonValueKind.String ||
+            !DateTimeOffset.TryParse(
+                element.GetString(),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out DateTimeOffset parsed))
+        {
+            return false;
+        }
+
+        timestamp = parsed;
         return true;
     }
 

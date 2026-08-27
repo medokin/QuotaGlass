@@ -74,6 +74,42 @@ public sealed class OpenCodeConsoleGoClientTests
         Assert.Empty(result.Workspaces);
     }
 
+    [Fact]
+    public async Task FetchAsync_NullFiveHourResetKeepsAvailableWindow()
+    {
+        // Catches the nullable upstream rolling reset invalidating an otherwise active Go subscription.
+        string status = ValidStatus.Replace(
+            "\"resetsAt\": \"2026-08-27T13:00:00Z\"",
+            "\"resetsAt\": null",
+            StringComparison.Ordinal);
+        var client = new OpenCodeConsoleGoClient(Handler(JsonResponse(status)), SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync([Account], CancellationToken.None);
+
+        OpenCodeConsoleWorkspace workspace = Assert.Single(result.Workspaces);
+        UsageWindow rolling = Assert.Single(workspace.Windows, window => window.Label == "rolling");
+        Assert.Null(rolling.ResetsAt);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ComputesPercentageBeforeFloatingPointConversion()
+    {
+        // Catches arbitrarily large micro-cent counters becoming infinity divided by infinity.
+        string used = "1" + new string('0', 400);
+        string limit = "2" + new string('0', 400);
+        string status = ValidStatus
+            .Replace("\"limitMicroCents\": \"400\"", $"\"limitMicroCents\": \"{limit}\"", StringComparison.Ordinal)
+            .Replace("\"usedMicroCents\": \"100\"", $"\"usedMicroCents\": \"{used}\"", StringComparison.Ordinal);
+        var client = new OpenCodeConsoleGoClient(Handler(JsonResponse(status)), SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync([Account], CancellationToken.None);
+
+        UsageWindow rolling = Assert.Single(
+            Assert.Single(result.Workspaces).Windows,
+            window => window.Label == "rolling");
+        Assert.Equal(50, rolling.Percent);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
