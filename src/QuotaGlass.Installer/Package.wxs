@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="QuotaGlass"
            Manufacturer="QuotaGlass"
            Version="$(var.MsiVersion)"
@@ -15,6 +16,7 @@
 
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/medokin/QuotaGlass" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
     <Icon Id="QuotaGlassIcon" SourceFile="..\..\assets\branding\quotaglass.ico" />
     <Property Id="ARPPRODUCTICON" Value="QuotaGlassIcon" />
     <SetProperty Id="ARPINSTALLLOCATION"
@@ -62,19 +64,34 @@
                      KeyPath="yes" />
     </Component>
 
-    <SetProperty Id="WixQuietExecCmdLine"
-                 Value="&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;QuotaGlass&quot; /f"
-                 Before="RemoveStaleAutostartValue"
-                 Sequence="execute" />
-    <CustomAction Id="RemoveStaleAutostartValue"
+    <CustomAction Id="SetCloseRunningQuotaGlassCommand"
+                  Property="WixQuietExecCmdLine"
+                  Value="&quot;[SystemFolder]taskkill.exe&quot; /F /IM &quot;QuotaGlass.exe&quot;" />
+    <CustomAction Id="CloseRunningQuotaGlass"
                   BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
                   DllEntry="WixQuietExec"
                   Execute="immediate"
                   Impersonate="yes"
                   Return="ignore" />
+
+    <Binary Id="QuotaGlassInstallerActions"
+            SourceFile="$(var.QuotaGlass.InstallerActions.TargetDir)QuotaGlass.InstallerActions.CA.dll" />
+    <CustomAction Id="AddQuotaGlassAutostartCleanup"
+                  BinaryRef="QuotaGlassInstallerActions"
+                  DllEntry="AddQuotaGlassAutostartCleanup"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="ignore" />
+
     <InstallExecuteSequence>
-      <Custom Action="RemoveStaleAutostartValue"
-              Before="RemoveFiles"
+      <Custom Action="SetCloseRunningQuotaGlassCommand"
+              Before="CloseRunningQuotaGlass"
+              Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <Custom Action="CloseRunningQuotaGlass"
+              Before="InstallValidate"
+              Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <Custom Action="AddQuotaGlassAutostartCleanup"
+              Before="RemoveRegistryValues"
               Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
