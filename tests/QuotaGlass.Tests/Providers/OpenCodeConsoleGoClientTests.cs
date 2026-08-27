@@ -156,6 +156,50 @@ public sealed class OpenCodeConsoleGoClientTests
     }
 
     [Fact]
+    public async Task FetchAsync_TransientAccountFailureBlocksAutomaticSelection()
+    {
+        // Catches incomplete discovery being mistaken for exactly one eligible workspace.
+        var unavailable = new OpenCodeConsoleAccount("account-unavailable", "access-unavailable", null);
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.Headers.Authorization?.Parameter == "access-unavailable")
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadGateway);
+            }
+
+            return request.RequestUri?.AbsolutePath.EndsWith("/orgs", StringComparison.Ordinal) == true
+                ? JsonResponse("[{\"id\":\"org-test\"}]")
+                : JsonResponse(ValidStatus);
+        });
+        var client = new OpenCodeConsoleGoClient(handler, SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync(
+            [unavailable, Account],
+            CancellationToken.None);
+
+        Assert.Equal(OpenCodeConsoleFetchOutcome.TransientFailure, result.Outcome);
+        Assert.Equal(HttpStatusCode.BadGateway, result.StatusCode);
+        Assert.Empty(result.Workspaces);
+    }
+
+    [Fact]
+    public async Task FetchAsync_BoundsConcurrentDiscoveryRequests()
+    {
+        // Catches valid multi-account discovery becoming fully serial or unbounded.
+        var handler = new ConcurrencyHandler();
+        var accounts = Enumerable.Range(0, 8)
+            .Select(index => new OpenCodeConsoleAccount($"account-{index}", $"access-{index}", null))
+            .ToImmutableArray();
+        var client = new OpenCodeConsoleGoClient(handler, SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync(accounts, CancellationToken.None);
+
+        Assert.Equal(OpenCodeConsoleFetchOutcome.Success, result.Outcome);
+        Assert.Empty(result.Workspaces);
+        Assert.InRange(handler.MaximumConcurrentRequests, 2, 4);
+    }
+
+    [Fact]
     public async Task FetchAsync_ConfiguredSelectorSkipsUnselectedStatusRequests()
     {
         // Catches explicit selection still probing every organization on every poll.
@@ -319,6 +363,38 @@ public sealed class OpenCodeConsoleGoClientTests
             Started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new Xunit.Sdk.XunitException("Unreachable");
+        }
+    }
+
+    private sealed class ConcurrencyHandler : HttpMessageHandler
+    {
+        private int _activeRequests;
+        private int _maximumConcurrentRequests;
+
+        public int MaximumConcurrentRequests => _maximumConcurrentRequests;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            int active = Interlocked.Increment(ref _activeRequests);
+            int observed;
+            do
+            {
+                observed = _maximumConcurrentRequests;
+            }
+            while (active > observed &&
+                Interlocked.CompareExchange(ref _maximumConcurrentRequests, active, observed) != observed);
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+                return JsonResponse("[]");
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeRequests);
+            }
         }
     }
 }

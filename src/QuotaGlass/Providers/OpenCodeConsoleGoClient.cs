@@ -41,6 +41,7 @@ internal interface IOpenCodeConsoleGoClient
 
 internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
 {
+    private const int MaximumConcurrentRequests = 4;
     private const int MaximumOrganizationsPerAccount = 32;
     private static readonly Uri OrganizationsUri = new("https://opencode.ai/console/api/orgs");
     private static readonly Uri GoStatusUri = new("https://opencode.ai/console/api/go/status");
@@ -64,81 +65,121 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
         CancellationToken cancellationToken,
         string? workspaceSelector = null)
     {
-        var workspaces = ImmutableArray.CreateBuilder<OpenCodeConsoleWorkspace>();
-        OpenCodeConsoleFetchResult? failure = null;
         using var client = new HttpClient(_handler, disposeHandler: false);
+        using var requestGate = new SemaphoreSlim(MaximumConcurrentRequests);
+        OrganizationDiscovery[] discoveries = await Task.WhenAll(accounts.Select(account =>
+            DiscoverOrganizationsAsync(client, requestGate, account, cancellationToken)))
+            .ConfigureAwait(false);
 
-        foreach (OpenCodeConsoleAccount account in accounts)
+        var targets = ImmutableArray.CreateBuilder<WorkspaceTarget>();
+        OpenCodeConsoleFetchResult? authenticationFailure = null;
+        OpenCodeConsoleFetchResult? blockingFailure = null;
+        foreach (OrganizationDiscovery discovery in discoveries)
         {
-            HttpJsonResult organizations = await GetJsonAsync(
-                client,
-                OrganizationsUri,
-                account.AccessToken,
-                organizationId: null,
-                cancellationToken).ConfigureAwait(false);
-            if (organizations.Failure is not null)
+            RememberFailure(discovery.Failure, ref authenticationFailure, ref blockingFailure);
+            targets.AddRange(discovery.Targets);
+        }
+
+        ImmutableArray<WorkspaceTarget> selectedTargets = targets
+            .OrderBy(target => target.Selector, StringComparer.Ordinal)
+            .Where(target => workspaceSelector is null ||
+                string.Equals(target.Selector, workspaceSelector, StringComparison.Ordinal))
+            .ToImmutableArray();
+        WorkspaceDiscovery[] workspaceDiscoveries = await Task.WhenAll(selectedTargets.Select(target =>
+            DiscoverWorkspaceAsync(client, requestGate, target, cancellationToken)))
+            .ConfigureAwait(false);
+
+        var workspaces = ImmutableArray.CreateBuilder<OpenCodeConsoleWorkspace>();
+        foreach (WorkspaceDiscovery discovery in workspaceDiscoveries)
+        {
+            RememberFailure(discovery.Failure, ref authenticationFailure, ref blockingFailure);
+            if (discovery.Workspace is not null)
             {
-                failure ??= organizations.Failure;
-                continue;
+                workspaces.Add(discovery.Workspace);
             }
+        }
 
-            using JsonDocument organizationDocument = organizations.Document!;
-            if (!TryReadOrganizationIds(
-                organizationDocument.RootElement,
-                out ImmutableArray<string> organizationIds))
-            {
-                failure ??= InvalidResponse();
-                continue;
-            }
+        if (workspaceSelector is not null && workspaces.Count > 0)
+        {
+            return Success(workspaces.ToImmutable());
+        }
 
-            foreach (string organizationId in organizationIds.Order(StringComparer.Ordinal))
-            {
-                string selector = CreateSelector(account.AccountId, organizationId);
-                if (workspaceSelector is not null &&
-                    !string.Equals(selector, workspaceSelector, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                HttpJsonResult status = await GetJsonAsync(
-                    client,
-                    GoStatusUri,
-                    account.AccessToken,
-                    organizationId,
-                    cancellationToken).ConfigureAwait(false);
-                if (status.Failure is not null)
-                {
-                    failure ??= status.Failure;
-                    continue;
-                }
-
-                using JsonDocument statusDocument = status.Document!;
-                if (!TryReadWorkspace(statusDocument.RootElement, out ImmutableArray<UsageWindow> windows))
-                {
-                    failure ??= InvalidResponse();
-                    continue;
-                }
-
-                if (!windows.IsEmpty)
-                {
-                    var workspace = new OpenCodeConsoleWorkspace(selector, windows);
-                    if (workspaceSelector is not null)
-                    {
-                        return Success([workspace]);
-                    }
-
-                    workspaces.Add(workspace);
-                }
-            }
+        if (blockingFailure is not null)
+        {
+            return blockingFailure;
         }
 
         return workspaces.Count > 0
             ? Success(workspaces.ToImmutable())
-            : failure ?? Success([]);
+            : authenticationFailure ?? Success([]);
+    }
+
+    private async Task<OrganizationDiscovery> DiscoverOrganizationsAsync(
+        HttpClient client,
+        SemaphoreSlim requestGate,
+        OpenCodeConsoleAccount account,
+        CancellationToken cancellationToken)
+    {
+        HttpJsonResult organizations = await GetJsonAsync(
+            client,
+            requestGate,
+            OrganizationsUri,
+            account.AccessToken,
+            organizationId: null,
+            cancellationToken).ConfigureAwait(false);
+        if (organizations.Failure is not null)
+        {
+            return new OrganizationDiscovery([], organizations.Failure);
+        }
+
+        using JsonDocument document = organizations.Document!;
+        if (!TryReadOrganizationIds(document.RootElement, out ImmutableArray<string> organizationIds))
+        {
+            return new OrganizationDiscovery([], InvalidResponse());
+        }
+
+        ImmutableArray<WorkspaceTarget> targets = organizationIds
+            .Select(organizationId => new WorkspaceTarget(
+                account,
+                organizationId,
+                CreateSelector(account.AccountId, organizationId)))
+            .ToImmutableArray();
+        return new OrganizationDiscovery(targets, null);
+    }
+
+    private async Task<WorkspaceDiscovery> DiscoverWorkspaceAsync(
+        HttpClient client,
+        SemaphoreSlim requestGate,
+        WorkspaceTarget target,
+        CancellationToken cancellationToken)
+    {
+        HttpJsonResult status = await GetJsonAsync(
+            client,
+            requestGate,
+            GoStatusUri,
+            target.Account.AccessToken,
+            target.OrganizationId,
+            cancellationToken).ConfigureAwait(false);
+        if (status.Failure is not null)
+        {
+            return new WorkspaceDiscovery(null, status.Failure);
+        }
+
+        using JsonDocument document = status.Document!;
+        if (!TryReadWorkspace(document.RootElement, out ImmutableArray<UsageWindow> windows))
+        {
+            return new WorkspaceDiscovery(null, InvalidResponse());
+        }
+
+        OpenCodeConsoleWorkspace? workspace = windows.IsEmpty
+            ? null
+            : new OpenCodeConsoleWorkspace(target.Selector, windows);
+        return new WorkspaceDiscovery(workspace, null);
     }
 
     private async Task<HttpJsonResult> GetJsonAsync(
         HttpClient client,
+        SemaphoreSlim requestGate,
         Uri uri,
         string accessToken,
         string? organizationId,
@@ -153,48 +194,56 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
             request.Headers.TryAddWithoutValidation("x-org-id", organizationId);
         }
 
-        using HttpResponseMessage response = await client
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-        {
-            return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
-                OpenCodeConsoleFetchOutcome.AuthenticationRequired,
-                [],
-                response.StatusCode));
-        }
-
-        TimeSpan? retryAfter = ProviderHttpSafety.GetRetryAfter(
-            response,
-            _timeProvider.GetUtcNow());
-        if (retryAfter is not null)
-        {
-            return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
-                OpenCodeConsoleFetchOutcome.RateLimited,
-                [],
-                response.StatusCode,
-                retryAfter));
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
-                OpenCodeConsoleFetchOutcome.TransientFailure,
-                [],
-                response.StatusCode));
-        }
-
+        await requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            JsonDocument document = await ProviderHttpSafety
-                .ReadJsonAsync(response, cancellationToken)
+            using HttpResponseMessage response = await client
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
-            return HttpJsonResult.FromDocument(document);
+
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
+                    OpenCodeConsoleFetchOutcome.AuthenticationRequired,
+                    [],
+                    response.StatusCode));
+            }
+
+            TimeSpan? retryAfter = ProviderHttpSafety.GetRetryAfter(
+                response,
+                _timeProvider.GetUtcNow());
+            if (retryAfter is not null)
+            {
+                return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
+                    OpenCodeConsoleFetchOutcome.RateLimited,
+                    [],
+                    response.StatusCode,
+                    retryAfter));
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return HttpJsonResult.FromFailure(new OpenCodeConsoleFetchResult(
+                    OpenCodeConsoleFetchOutcome.TransientFailure,
+                    [],
+                    response.StatusCode));
+            }
+
+            try
+            {
+                JsonDocument document = await ProviderHttpSafety
+                    .ReadJsonAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
+                return HttpJsonResult.FromDocument(document);
+            }
+            catch (InvalidDataException)
+            {
+                return HttpJsonResult.FromFailure(InvalidResponse(response.StatusCode));
+            }
         }
-        catch (InvalidDataException)
+        finally
         {
-            return HttpJsonResult.FromFailure(InvalidResponse(response.StatusCode));
+            requestGate.Release();
         }
     }
 
@@ -379,6 +428,34 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
         ImmutableArray<OpenCodeConsoleWorkspace> workspaces) => new(
         OpenCodeConsoleFetchOutcome.Success,
         workspaces);
+
+    private static void RememberFailure(
+        OpenCodeConsoleFetchResult? failure,
+        ref OpenCodeConsoleFetchResult? authenticationFailure,
+        ref OpenCodeConsoleFetchResult? blockingFailure)
+    {
+        if (failure?.Outcome == OpenCodeConsoleFetchOutcome.AuthenticationRequired)
+        {
+            authenticationFailure ??= failure;
+        }
+        else if (failure is not null)
+        {
+            blockingFailure ??= failure;
+        }
+    }
+
+    private sealed record WorkspaceTarget(
+        OpenCodeConsoleAccount Account,
+        string OrganizationId,
+        string Selector);
+
+    private sealed record OrganizationDiscovery(
+        ImmutableArray<WorkspaceTarget> Targets,
+        OpenCodeConsoleFetchResult? Failure);
+
+    private sealed record WorkspaceDiscovery(
+        OpenCodeConsoleWorkspace? Workspace,
+        OpenCodeConsoleFetchResult? Failure);
 
     private sealed record HttpJsonResult(
         JsonDocument? Document,

@@ -85,6 +85,25 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_OpenCodeConsoleSettingsOnOtherProviderReturnsDefaults()
+    {
+        AppSettings invalid = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                "claude",
+                new ProviderSettings(true)
+                {
+                    OpenCodeConsole = new OpenCodeConsoleSettings(true, null),
+                }),
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(invalid), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        Assert.Equal(AppSettings.Default, loaded);
+    }
+
+    [Fact]
     public async Task LoadAsync_PreOpenCodeSettingsAddsEnabledOpenCodeGoProvider()
     {
         // Catches a settings schema addition that discards existing settings or leaves the provider unavailable.

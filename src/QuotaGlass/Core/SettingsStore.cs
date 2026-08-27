@@ -316,6 +316,12 @@ public sealed class SettingsStore : IDisposable
         foreach ((string providerId, ProviderSettings provider) in settings.Providers)
         {
             OpenCodeConsoleSettings? console = provider.OpenCodeConsole;
+            if (console is not null &&
+                !string.Equals(providerId, "opencode-go", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             if (console?.WorkspaceSelector is not string selector)
             {
                 continue;
