@@ -5,7 +5,6 @@ namespace QuotaGlass.Core;
 
 public sealed class SettingsStore : IDisposable
 {
-    private static readonly string[] RequiredProviderIds = ["claude", "codex", "ollama"];
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -15,17 +14,28 @@ public sealed class SettingsStore : IDisposable
     private readonly SemaphoreSlim _persistenceGate = new(1, 1);
     private readonly string _path;
     private readonly TimeSpan _reloadDelay;
+    private readonly RollingFileLog? _log;
     private readonly FileSystemWatcher _watcher;
     private System.Threading.Timer? _reloadTimer;
     private AppSettings _current = AppSettings.Default;
     private bool _disposed;
 
     public SettingsStore(string path)
-        : this(path, TimeSpan.FromMilliseconds(250))
+        : this(path, TimeSpan.FromMilliseconds(250), null)
+    {
+    }
+
+    public SettingsStore(string path, RollingFileLog log)
+        : this(path, TimeSpan.FromMilliseconds(250), log)
     {
     }
 
     internal SettingsStore(string path, TimeSpan reloadDelay)
+        : this(path, reloadDelay, null)
+    {
+    }
+
+    internal SettingsStore(string path, TimeSpan reloadDelay, RollingFileLog? log)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (reloadDelay < TimeSpan.Zero)
@@ -35,6 +45,7 @@ public sealed class SettingsStore : IDisposable
 
         _path = Path.GetFullPath(path);
         _reloadDelay = reloadDelay;
+        _log = log;
         string directory = Path.GetDirectoryName(_path)
             ?? throw new ArgumentException("The settings path must include a directory.", nameof(path));
         Directory.CreateDirectory(directory);
@@ -77,7 +88,7 @@ public sealed class SettingsStore : IDisposable
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        if (!IsValid(settings))
+        if (!TryNormalize(settings, out AppSettings normalized))
         {
             throw new ArgumentException("Settings must be complete and valid.", nameof(settings));
         }
@@ -86,7 +97,7 @@ public sealed class SettingsStore : IDisposable
         try
         {
             ThrowIfDisposedLocked();
-            await WriteAsync(settings, cancellationToken).ConfigureAwait(false);
+            await WriteAsync(normalized, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -112,9 +123,9 @@ public sealed class SettingsStore : IDisposable
             (bool isValid, AppSettings fileSettings) = await ReadAsync(cancellationToken).ConfigureAwait(false);
             AppSettings current = isValid ? fileSettings : lastKnownGood;
 
-            AppSettings updated = update(current)
+            AppSettings candidate = update(current)
                 ?? throw new ArgumentException("The settings updater returned null.", nameof(update));
-            if (!IsValid(updated))
+            if (!TryNormalize(candidate, out AppSettings updated))
             {
                 throw new ArgumentException("The settings updater produced invalid settings.", nameof(update));
             }
@@ -226,6 +237,7 @@ public sealed class SettingsStore : IDisposable
             (bool isValid, AppSettings settings) = await ReadAsync(CancellationToken.None).ConfigureAwait(false);
             if (!isValid)
             {
+                _log?.Write(LogArea.Settings, LogOutcome.Invalid);
                 return;
             }
 
@@ -260,8 +272,8 @@ public sealed class SettingsStore : IDisposable
         {
             await using FileStream stream = new(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, useAsync: true);
             AppSettings? settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            return settings is not null && IsValid(settings)
-                ? (true, settings)
+            return settings is not null && TryNormalize(settings, out AppSettings normalized)
+                ? (true, normalized)
                 : (false, AppSettings.Default);
         }
         catch (JsonException)
@@ -278,8 +290,9 @@ public sealed class SettingsStore : IDisposable
         }
     }
 
-    private static bool IsValid(AppSettings settings)
+    private static bool TryNormalize(AppSettings settings, out AppSettings normalized)
     {
+        normalized = AppSettings.Default;
         if (settings.PollInterval <= TimeSpan.Zero || settings.IdleInterval <= TimeSpan.Zero ||
             !double.IsFinite(settings.WarningPercent) || !double.IsFinite(settings.CriticalPercent) ||
             settings.WarningPercent < 0 || settings.WarningPercent >= settings.CriticalPercent || settings.CriticalPercent > 100 ||
@@ -294,7 +307,19 @@ public sealed class SettingsStore : IDisposable
             return false;
         }
 
-        return RequiredProviderIds.All(providerId => settings.Providers.TryGetValue(providerId, out ProviderSettings? provider) && provider is not null);
+        if (settings.Providers.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null))
+        {
+            return false;
+        }
+
+        var providers = settings.Providers.ToBuilder();
+        foreach ((string providerId, ProviderSettings provider) in AppSettings.Default.Providers)
+        {
+            providers.TryAdd(providerId, provider);
+        }
+
+        normalized = settings with { Providers = providers.ToImmutable() };
+        return true;
     }
 
     private void ThrowIfDisposed()

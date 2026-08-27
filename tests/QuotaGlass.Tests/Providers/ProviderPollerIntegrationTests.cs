@@ -116,10 +116,98 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         Assert.Equal(0, recovered.ConsecutiveFailures);
     }
 
+    [Fact]
+    public async Task CodexNonJsonResponseRetainsLastGoodData()
+    {
+        // Break caught: a 200 HTML response erases the last successful Codex quota snapshot.
+        int request = 0;
+        var handler = new StubHttpMessageHandler(_ => Interlocked.Increment(ref request) switch
+        {
+            1 => JsonResponse(ReadFixture("codex-wham.json")),
+            2 => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<html>login</html>", Encoding.UTF8, "text/html"),
+            },
+            _ => throw new InvalidOperationException("Unexpected HTTP request."),
+        });
+        string credentialPath = _directory.WriteFile(
+            "codex-invalid-response-auth.json",
+            """
+            {"tokens":{"access_token":"unit-test-access-token","account_id":"unit-test-account-id"}}
+            """);
+        StatusPoller poller = CreatePoller(new CodexProvider(credentialPath, handler, SeverityFromPercent));
+
+        ProviderSnapshot good = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot retained = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        AssertRetained(good, retained, HealthState.Ok, 1);
+    }
+
+    [Fact]
+    public async Task OllamaConnectionFailureIncrementsFailuresAndRetainsInfo()
+    {
+        // Break caught: Ollama connection refusal is published as a successful empty snapshot.
+        int request = 0;
+        var handler = new StubHttpMessageHandler(message => Interlocked.Increment(ref request) switch
+        {
+            1 => JsonResponse(ReadFixture("ollama-version.json")),
+            2 => JsonResponse(ReadFixture("ollama-ps.json")),
+            3 => throw new HttpRequestException("refused"),
+            _ => throw new InvalidOperationException($"Unexpected request: {message.RequestUri}"),
+        });
+        StatusPoller poller = CreatePoller(new OllamaProvider(handler));
+
+        ProviderSnapshot good = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot retained = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        AssertRetained(good, retained, HealthState.Ok, 1);
+    }
+
+    [Fact]
+    public async Task CanceledMultiProviderPollDoesNotCommitCodexCooldown()
+    {
+        // Break caught: a completed rate-limit response mutates scheduler state before poll cancellation commits.
+        int request = 0;
+        var handler = new StubHttpMessageHandler(_ => Interlocked.Increment(ref request) switch
+        {
+            1 => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
+            2 => JsonResponse(ReadFixture("codex-wham.json")),
+            _ => throw new InvalidOperationException("Unexpected HTTP request."),
+        });
+        string credentialPath = _directory.WriteFile(
+            "codex-cancel-auth.json",
+            """
+            {"tokens":{"access_token":"unit-test-access-token","account_id":"unit-test-account-id"}}
+            """);
+        var codex = new CodexProvider(credentialPath, handler, SeverityFromPercent);
+        FakeStatusProvider blocking = FakeStatusProvider.Blocking("ollama");
+        StatusPoller poller = CreatePoller([codex, blocking]);
+        using var cancellation = new CancellationTokenSource();
+
+        Task<StatusReport> canceledPoll = poller.PollOnceAsync(cancellation.Token);
+        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledPoll);
+        blocking.CompleteOk();
+
+        ProviderSnapshot codexSnapshot = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers,
+            snapshot => snapshot.Id == "codex");
+
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(HealthState.Ok, codexSnapshot.Health);
+        Assert.Equal(0, codexSnapshot.ConsecutiveFailures);
+    }
+
     public void Dispose() => _directory.Dispose();
 
     private StatusPoller CreatePoller(IStatusProvider provider) => new(
         [provider],
+        () => AppSettings.Default,
+        new RollingFileLog(Path.Combine(_directory.Path, $"poller-{Guid.NewGuid():N}.log")));
+
+    private StatusPoller CreatePoller(IReadOnlyList<IStatusProvider> providers) => new(
+        providers,
         () => AppSettings.Default,
         new RollingFileLog(Path.Combine(_directory.Path, $"poller-{Guid.NewGuid():N}.log")));
 

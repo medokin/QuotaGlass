@@ -12,9 +12,10 @@ public sealed class OllamaProviderTests
     public async Task FetchAsync_ProducesInfoWithoutUsageWindows()
     {
         // Catches a mapper that loses the local version or reports Ollama models as quota windows.
-        ProviderSnapshot snapshot = await CreateFixtureProvider()
-            .FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateFixtureProvider().FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.Success, result.Outcome);
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Empty(snapshot.Windows);
         Assert.Contains(new InfoLine("Version", "0.32.15"), snapshot.Info);
@@ -22,18 +23,17 @@ public sealed class OllamaProviderTests
     }
 
     [Fact]
-    public async Task FetchAsync_ConnectionRefusedIsQuietlyUnreachable()
+    public async Task FetchAsync_ConnectionRefusedReturnsTransientFailure()
     {
         // Catches a local connection failure that is surfaced as an application error.
         var handler = new StubHttpMessageHandler(_ =>
             throw new HttpRequestException("refused", null, HttpStatusCode.ServiceUnavailable));
 
-        ProviderSnapshot snapshot = await new OllamaProvider(handler)
+        ProviderFetchResult result = await new OllamaProvider(handler)
             .FetchAsync(CancellationToken.None);
 
-        Assert.Equal(HealthState.Unreachable, snapshot.Health);
-        Assert.Null(snapshot.Error);
-        Assert.Empty(snapshot.Windows);
+        Assert.Equal(ProviderFetchOutcome.TransientFailure, result.Outcome);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public sealed class OllamaProviderTests
             };
         });
 
-        ProviderSnapshot snapshot = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await new OllamaProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal([true, true], cacheDirectives);
@@ -70,7 +70,98 @@ public sealed class OllamaProviderTests
         var handler = new CancellationAwareHttpMessageHandler();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new OllamaProvider(handler).FetchAsync(cancellationSource.Token));
+            new OllamaProvider(handler).FetchSnapshotAsync(cancellationSource.Token));
+    }
+
+    [Fact]
+    public async Task FetchAsync_InvalidJsonReturnsInvalidResponse()
+    {
+        // Break caught: malformed local JSON is treated as a successful empty status.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"version\":", Encoding.UTF8, "application/json"),
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"version\":null}")]
+    [InlineData("{\"version\":42}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"text\"")]
+    public async Task FetchAsync_InvalidVersionShapeReturnsInvalidResponse(string versionJson)
+    {
+        // Break caught: a valid JSON document with a missing or non-string version escapes as an exception.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(versionJson, Encoding.UTF8, "application/json"),
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"models\":null}")]
+    [InlineData("{\"models\":{}}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"text\"")]
+    public async Task FetchAsync_InvalidModelsShapeReturnsInvalidResponse(string processJson)
+    {
+        // Break caught: a valid process document with a missing or non-array models field is transiently reclassified.
+        var handler = new StubHttpMessageHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                request.RequestUri!.AbsolutePath.EndsWith("version", StringComparison.Ordinal)
+                    ? "{\"version\":\"0.32.15\"}"
+                    : processJson,
+                Encoding.UTF8,
+                "application/json"),
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "30", 30)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, null, 300)]
+    public async Task FetchAsync_RateLimitReturnsSafeCooldown(
+        HttpStatusCode statusCode,
+        string? retryAfter,
+        int expectedSeconds)
+    {
+        // Break caught: an Ollama 429 or 503 resets consecutive failures.
+        var handler = new StubHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(statusCode);
+            if (retryAfter is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            }
+
+            return response;
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.RateLimited, result.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), result.RetryAfter);
+        Assert.Null(result.Snapshot);
     }
 
     private static OllamaProvider CreateFixtureProvider() => new(new StubHttpMessageHandler(request =>

@@ -17,7 +17,7 @@ public sealed class CodexProviderTests : IDisposable
     {
         // Catches a provider that treats reset_at as an ISO value or omits additional limits.
         ProviderSnapshot snapshot = await CreateProvider("codex-wham.json", "application/json")
-            .FetchAsync(CancellationToken.None);
+            .FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal("prolite", snapshot.PlanLabel);
@@ -42,7 +42,7 @@ public sealed class CodexProviderTests : IDisposable
             return JsonResponse(ReadFixture("codex-wham.json"), "application/json");
         });
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal("Bearer", authorization?.Scheme);
@@ -52,15 +52,14 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_HtmlUnder200ReturnsDegradedSnapshot()
+    public async Task FetchAsync_HtmlUnder200ReturnsInvalidResponse()
     {
         // Catches a provider that attempts to deserialize a successful HTML response.
-        ProviderSnapshot snapshot = await CreateProvider("codex-html-200.html", "text/html")
+        ProviderFetchResult result = await CreateProvider("codex-html-200.html", "text/html")
             .FetchAsync(CancellationToken.None);
 
-        Assert.Equal(HealthState.Degraded, snapshot.Health);
-        Assert.Equal("Codex usage endpoint returned non-JSON content", snapshot.Error);
-        Assert.Empty(snapshot.Windows);
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
@@ -74,7 +73,7 @@ public sealed class CodexProviderTests : IDisposable
             return JsonResponse(ReadFixture("codex-wham.json"), "application/json");
         });
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.True(noStore);
@@ -86,8 +85,10 @@ public sealed class CodexProviderTests : IDisposable
         // Catches an expired Codex credential reported as a generic transport failure.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run codex login", snapshot.Error);
     }
@@ -97,7 +98,7 @@ public sealed class CodexProviderTests : IDisposable
     {
         // Catches a mapper that creates a phantom window for a null secondary_window.
         ProviderSnapshot snapshot = await CreateProvider("codex-wham.json", "application/json")
-            .FetchAsync(CancellationToken.None);
+            .FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(3, snapshot.Windows.Length);
         Assert.DoesNotContain(snapshot.Windows, window => window.Label == "0s");
@@ -117,7 +118,7 @@ public sealed class CodexProviderTests : IDisposable
             """;
         var handler = new StubHttpMessageHandler(_ => JsonResponse(response, "application/json"));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(expectedLabel, Assert.Single(snapshot.Windows).Label);
     }
@@ -131,7 +132,7 @@ public sealed class CodexProviderTests : IDisposable
             """;
         var handler = new StubHttpMessageHandler(_ => JsonResponse(response, "application/json"));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(Severity.Critical, Assert.Single(snapshot.Windows).Severity);
     }
@@ -153,7 +154,7 @@ public sealed class CodexProviderTests : IDisposable
             null,
             _ => credential);
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await provider.FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal(1, handler.RequestCount);
@@ -176,7 +177,7 @@ public sealed class CodexProviderTests : IDisposable
             percent => SeverityPolicy.FromPercent(percent, 80, 95));
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -205,23 +206,74 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_UsageServerFailureThrowsOperationalFailure()
+    public async Task FetchAsync_UsageServerFailureReturnsTransientFailure()
     {
         // Break caught: a transient Codex endpoint failure is returned as a successful empty snapshot.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway));
 
-        await Assert.ThrowsAsync<HttpRequestException>(
-            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.TransientFailure, result.Outcome);
+        Assert.Equal(HttpStatusCode.BadGateway, result.StatusCode);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
-    public async Task FetchAsync_TruncatedUsageJsonThrowsOperationalFailure()
+    public async Task FetchAsync_TruncatedUsageJsonReturnsInvalidResponse()
     {
         // Break caught: truncated Codex JSON bypasses the poller's last-good retention boundary.
         var handler = new StubHttpMessageHandler(_ => JsonResponse("{\"rate_limit\":", "application/json"));
 
-        await Assert.ThrowsAnyAsync<JsonException>(
-            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Fact]
+    public async Task FetchAsync_MissingCredentialReturnsNotConfiguredSnapshot()
+    {
+        // Break caught: a missing Codex credential becomes a repeated transport failure.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        var provider = new CodexProvider(
+            Path.Combine(directory.Path, "missing-auth.json"),
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95));
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "60", 60)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, null, 300)]
+    public async Task FetchAsync_RateLimitReturnsSafeCooldown(
+        HttpStatusCode statusCode,
+        string? retryAfter,
+        int expectedSeconds)
+    {
+        // Break caught: Codex rate limiting erases retained quota data.
+        var handler = new StubHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(statusCode);
+            if (retryAfter is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            }
+
+            return response;
+        });
+
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.RateLimited, result.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), result.RetryAfter);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
@@ -234,7 +286,7 @@ public sealed class CodexProviderTests : IDisposable
             throw new OperationCanceledException(cancellation.Token));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => CreateProvider(handler).FetchAsync(cancellation.Token));
+            () => CreateProvider(handler).FetchSnapshotAsync(cancellation.Token));
     }
 
     private CodexProvider CreateProvider(string fixtureName, string contentType) =>

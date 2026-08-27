@@ -7,17 +7,30 @@ namespace QuotaGlass.Tests.Support;
 
 internal sealed class FakeStatusProvider : IStatusProvider
 {
-    private readonly Func<int, CancellationToken, Task<ProviderSnapshot>> _fetch;
+    private readonly Func<int, CancellationToken, Task<ProviderFetchResult>> _fetch;
     private int _invocationCount;
 
     public FakeStatusProvider(
         string id,
-        Func<int, CancellationToken, Task<ProviderSnapshot>> fetch,
+        Func<int, CancellationToken, Task<ProviderFetchResult>> fetch,
         string? label = null)
     {
         Id = id;
         Label = label ?? id;
         _fetch = fetch;
+    }
+
+    public FakeStatusProvider(
+        string id,
+        Func<int, CancellationToken, Task<ProviderSnapshot>> fetch,
+        string? label = null)
+        : this(
+            id,
+            async (invocation, cancellationToken) => new ProviderFetchResult(
+                ProviderFetchOutcome.Success,
+                await fetch(invocation, cancellationToken)),
+            label)
+    {
     }
 
     public string Id { get; }
@@ -31,7 +44,7 @@ internal sealed class FakeStatusProvider : IStatusProvider
 
     public static FakeStatusProvider Blocking(string id, string? label = null)
     {
-        var completion = new TaskCompletionSource<ProviderSnapshot>(
+        var completion = new TaskCompletionSource<ProviderFetchResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var provider = new FakeStatusProvider(
             id,
@@ -45,7 +58,13 @@ internal sealed class FakeStatusProvider : IStatusProvider
         string id,
         ProviderSnapshot snapshot,
         string? label = null) =>
-        new(id, (_, _) => Task.FromResult(snapshot), label);
+        new(id, (_, _) => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, snapshot)), label);
+
+    public static FakeStatusProvider ReturningResult(
+        string id,
+        ProviderFetchResult result,
+        string? label = null) =>
+        new(id, (_, _) => Task.FromResult(result), label);
 
     public static FakeStatusProvider Sequence(
         string id,
@@ -61,9 +80,23 @@ internal sealed class FakeStatusProvider : IStatusProvider
             label);
     }
 
-    private TaskCompletionSource<ProviderSnapshot>? Completion { get; set; }
+    public static FakeStatusProvider SequenceResults(
+        string id,
+        IEnumerable<Func<CancellationToken, Task<ProviderFetchResult>>> fetches,
+        string? label = null)
+    {
+        var queue = new ConcurrentQueue<Func<CancellationToken, Task<ProviderFetchResult>>>(fetches);
+        return new FakeStatusProvider(
+            id,
+            (_, cancellationToken) => queue.TryDequeue(out Func<CancellationToken, Task<ProviderFetchResult>>? fetch)
+                ? fetch(cancellationToken)
+                : throw new InvalidOperationException("No fake fetch result remains."),
+            label);
+    }
 
-    public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
+    private TaskCompletionSource<ProviderFetchResult>? Completion { get; set; }
+
+    public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
         int invocation = Interlocked.Increment(ref _invocationCount);
         Started.TrySetResult();
@@ -71,7 +104,9 @@ internal sealed class FakeStatusProvider : IStatusProvider
     }
 
     public void CompleteOk(DateTimeOffset? fetchedAt = null) =>
-        Completion?.TrySetResult(Snapshot(Id, Label, fetchedAt: fetchedAt));
+        Completion?.TrySetResult(new ProviderFetchResult(
+            ProviderFetchOutcome.Success,
+            Snapshot(Id, Label, fetchedAt: fetchedAt)));
 
     public static ProviderSnapshot Snapshot(
         string id,

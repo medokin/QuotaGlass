@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using QuotaGlass.Core;
+using QuotaGlass.Providers;
 using QuotaGlass.Tests.Support;
 
 namespace QuotaGlass.Tests.Core;
@@ -32,12 +33,11 @@ public sealed class RollingFileLogTests : IDisposable
     public void Write_ClosedMetadataContractCannotAcceptIdentifierShapedStrings()
     {
         // Break caught: public metadata parameters regress to strings, allowing UUIDs or API keys to be supplied.
-        MethodInfo write = typeof(RollingFileLog).GetMethod(
-            nameof(RollingFileLog.Write),
-            [typeof(LogArea), typeof(LogOutcome), typeof(int?), typeof(Exception)])!;
+        MethodInfo write = typeof(RollingFileLog).GetMethod(nameof(RollingFileLog.Write))!;
 
         Assert.Equal(typeof(LogArea), write.GetParameters()[0].ParameterType);
         Assert.Equal(typeof(LogOutcome), write.GetParameters()[1].ParameterType);
+        Assert.Equal(typeof(ProviderFetchOutcome?), write.GetParameters()[5].ParameterType);
     }
 
     [Fact]
@@ -95,6 +95,46 @@ public sealed class RollingFileLogTests : IDisposable
         Assert.True(bytes.Length <= 1_048_576);
         Assert.True(DateTimeOffset.TryParse(timestamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out _));
         Assert.EndsWith($" platform timed-out status=503 exception={nameof(InvalidOperationException)}{Environment.NewLine}", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Write_ProviderDiagnosticsUseSanitizedScalarFields()
+    {
+        // Break caught: provider diagnostics omit transition data or include caller-controlled secrets.
+        var log = new RollingFileLog(_path);
+
+        log.Write(
+            LogArea.Provider,
+            LogOutcome.Failed,
+            statusCode: 429,
+            providerId: "codex",
+            providerOutcome: ProviderFetchOutcome.RateLimited,
+            cooldownSeconds: 300,
+            consecutiveFailures: 2);
+
+        string contents = File.ReadAllText(_path);
+        Assert.Contains(
+            " provider failed provider=codex fetch-outcome=rate-limited status=429 cooldown-seconds=300 consecutive-failures=2",
+            contents,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("secret@example.com")]
+    [InlineData("codex token")]
+    [InlineData("")]
+    public void Write_UnsafeProviderIdIsRejected(string providerId)
+    {
+        // Break caught: credentials or account identifiers can be passed through a free-form provider field.
+        var log = new RollingFileLog(_path);
+
+        Assert.Throws<ArgumentException>(() => log.Write(
+            LogArea.Provider,
+            LogOutcome.Failed,
+            providerId: providerId,
+            providerOutcome: ProviderFetchOutcome.TransientFailure));
+
+        Assert.False(File.Exists(_path));
     }
 
     public void Dispose()

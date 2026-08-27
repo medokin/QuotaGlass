@@ -8,5 +8,5 @@ public interface IStatusProvider
 
     string Label { get; }
 
-    Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken);
+    Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken);
 }

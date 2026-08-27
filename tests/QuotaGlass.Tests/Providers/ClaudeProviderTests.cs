@@ -15,7 +15,7 @@ public sealed class ClaudeProviderTests : IDisposable
     public async Task FetchAsync_MapsLimitsAndUncappedSpend()
     {
         // Catches a provider that maps obsolete top-level windows or treats uncapped spend as a quota.
-        ProviderSnapshot snapshot = await CreateProviderWithFixtures().FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProviderWithFixtures().FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal("team_standard", snapshot.PlanLabel);
@@ -42,7 +42,7 @@ public sealed class ClaudeProviderTests : IDisposable
         // Catches a provider that discards the vendor severity in favor of configurable thresholds.
         ProviderSnapshot snapshot = await CreateProviderWithFixtures(percent =>
                 SeverityPolicy.FromPercent(percent, 50, 60))
-            .FetchAsync(CancellationToken.None);
+            .FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(Severity.Normal, snapshot.Windows[0].Severity);
     }
@@ -54,8 +54,10 @@ public sealed class ClaudeProviderTests : IDisposable
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
         ClaudeProvider provider = CreateProvider(handler, expiresAtUnixMilliseconds: 0);
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
         Assert.Equal(0, handler.RequestCount);
@@ -72,7 +74,7 @@ public sealed class ClaudeProviderTests : IDisposable
                 {"claudeAiOauth":{"accessToken":"unit-test-access-token","expiresAt":0},"refreshToken":"sentinel-refresh-token"}
                 """, ",\"refreshToken\""));
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await provider.FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
@@ -90,7 +92,7 @@ public sealed class ClaudeProviderTests : IDisposable
                 {"claudeAiOauth":{"accessToken":"unit-test-access-token","refreshToken":"sentinel-refresh-token","expiresAt":0}}
                 """));
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await provider.FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
@@ -107,7 +109,7 @@ public sealed class ClaudeProviderTests : IDisposable
             "{\"claudeAiOauth\":{\"accessToken\":{\"nested\":\"unit-test-access-token\"},\"expiresAt\":0}}");
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -122,7 +124,7 @@ public sealed class ClaudeProviderTests : IDisposable
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":[0]}}");
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -137,7 +139,7 @@ public sealed class ClaudeProviderTests : IDisposable
             "{\"claudeAiOauth\":{\"accessToken\":\"\",\"expiresAt\":0}}");
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -151,7 +153,7 @@ public sealed class ClaudeProviderTests : IDisposable
             handler,
             "{\"claudeAiO\\u0061uth\":{\"accessT\\u006fken\":\"unit-test-access-token\",\"expires\\u0041t\":0}}");
 
-        ProviderSnapshot snapshot = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await provider.FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal(0, handler.RequestCount);
@@ -167,7 +169,7 @@ public sealed class ClaudeProviderTests : IDisposable
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\",\"expiresAt\":00}}");
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -183,7 +185,7 @@ public sealed class ClaudeProviderTests : IDisposable
             $"{{\"claudeAiOauth\":{{\"accessToken\":\"unit-test-access-token\",\"metadata\":{nested},\"expiresAt\":0}}}}");
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -236,7 +238,7 @@ public sealed class ClaudeProviderTests : IDisposable
             "{\"claudeAiOauth\":{\"accessToken\":\"unit-test-access-token\"");
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchAsync(CancellationToken.None));
+            () => provider.FetchSnapshotAsync(CancellationToken.None));
 
         Assert.DoesNotContain("unit-test-access-token", exception.Message, StringComparison.Ordinal);
         Assert.Equal(0, handler.RequestCount);
@@ -254,7 +256,7 @@ public sealed class ClaudeProviderTests : IDisposable
                 ? usage
                 : "{\"organization\":{}}"));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Null(snapshot.PlanLabel);
@@ -274,8 +276,11 @@ public sealed class ClaudeProviderTests : IDisposable
         // Catches a provider that reports an expired or rejected token as a generic transport failure.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(statusCode));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(statusCode, result.StatusCode);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
     }
@@ -297,8 +302,8 @@ public sealed class ClaudeProviderTests : IDisposable
         });
         ClaudeProvider provider = CreateProvider(handler);
 
-        ProviderSnapshot first = await provider.FetchAsync(CancellationToken.None);
-        ProviderSnapshot second = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot first = await provider.FetchSnapshotAsync(CancellationToken.None);
+        ProviderSnapshot second = await provider.FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal("team_standard", first.PlanLabel);
         Assert.Equal("team_standard", second.PlanLabel);
@@ -314,8 +319,11 @@ public sealed class ClaudeProviderTests : IDisposable
                 ? JsonResponse(ReadFixture("claude-usage.json"))
                 : new HttpResponseMessage(HttpStatusCode.Unauthorized));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(HttpStatusCode.Unauthorized, result.StatusCode);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         AssertUsageAndSpendPreserved(snapshot);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
@@ -338,7 +346,7 @@ public sealed class ClaudeProviderTests : IDisposable
         });
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => CreateProvider(handler).FetchAsync(cancellation.Token));
+            () => CreateProvider(handler).FetchSnapshotAsync(cancellation.Token));
     }
 
     [Fact]
@@ -359,11 +367,14 @@ public sealed class ClaudeProviderTests : IDisposable
                 : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
         });
         ClaudeProvider provider = CreateProvider(handler, timeProvider: time);
-        ProviderSnapshot first = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot first = await provider.FetchSnapshotAsync(CancellationToken.None);
         time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
 
-        ProviderSnapshot degraded = await provider.FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot degraded = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.PartialSuccess, result.Outcome);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result.StatusCode);
         Assert.Equal(HealthState.Ok, first.Health);
         Assert.Equal(HealthState.Degraded, degraded.Health);
         Assert.Equal("team_standard", degraded.PlanLabel);
@@ -383,7 +394,7 @@ public sealed class ClaudeProviderTests : IDisposable
                     Content = new StringContent("<html>not JSON</html>", Encoding.UTF8, "text/html"),
                 });
 
-        ProviderSnapshot degraded = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot degraded = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Degraded, degraded.Health);
         Assert.Null(degraded.PlanLabel);
@@ -400,7 +411,7 @@ public sealed class ClaudeProviderTests : IDisposable
                 ? JsonResponse(ReadFixture("claude-usage.json"))
                 : throw new HttpRequestException("synthetic profile failure"));
 
-        ProviderSnapshot degraded = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot degraded = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Degraded, degraded.Health);
         Assert.Null(degraded.PlanLabel);
@@ -409,7 +420,7 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_NonJsonUsageResponseThrowsOperationalFailure()
+    public async Task FetchAsync_NonJsonUsageResponseReturnsInvalidResponse()
     {
         // Catches a provider that attempts to parse an HTML success page as a usage response.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
@@ -417,30 +428,82 @@ public sealed class ClaudeProviderTests : IDisposable
             Content = new StringContent("<html>not JSON</html>", Encoding.UTF8, "text/html")
         });
 
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
-            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
 
-        Assert.DoesNotContain("unit-test-access-token", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
-    public async Task FetchAsync_UsageServerFailureThrowsOperationalFailure()
+    public async Task FetchAsync_ServiceUnavailableReturnsRateLimitedFallback()
     {
         // Break caught: a transient usage endpoint failure is returned as a successful empty snapshot.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
 
-        await Assert.ThrowsAsync<HttpRequestException>(
-            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.RateLimited, result.Outcome);
+        Assert.Equal(TimeSpan.FromMinutes(5), result.RetryAfter);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
-    public async Task FetchAsync_TruncatedUsageJsonThrowsOperationalFailure()
+    public async Task FetchAsync_TruncatedUsageJsonReturnsInvalidResponse()
     {
         // Break caught: truncated vendor JSON replaces valid retained usage with an empty degraded snapshot.
         var handler = new StubHttpMessageHandler(_ => JsonResponse("{\"limits\":["));
 
-        await Assert.ThrowsAnyAsync<JsonException>(
-            () => CreateProvider(handler).FetchAsync(CancellationToken.None));
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Fact]
+    public async Task FetchAsync_MissingCredentialReturnsNotConfiguredSnapshot()
+    {
+        // Break caught: a missing credential is counted as a transport failure.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string missingPath = Path.Combine(directory.Path, "missing-credential.json");
+        var provider = new ClaudeProvider(
+            missingPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95));
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "120", 120)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, null, 300)]
+    public async Task FetchAsync_RateLimitReturnsSafeCooldown(
+        HttpStatusCode statusCode,
+        string? retryAfter,
+        int expectedSeconds)
+    {
+        // Break caught: 429 or 503 is returned as a successful empty snapshot.
+        var handler = new StubHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(statusCode);
+            if (retryAfter is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            }
+
+            return response;
+        });
+
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.RateLimited, result.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), result.RetryAfter);
+        Assert.Null(result.Snapshot);
     }
 
     [Fact]
@@ -457,7 +520,7 @@ public sealed class ClaudeProviderTests : IDisposable
                     : ReadFixture("claude-profile.json"));
         });
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(HealthState.Ok, snapshot.Health);
         Assert.Equal([true, true], cacheDirectives);

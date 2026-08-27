@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using QuotaGlass.Model;
 using QuotaGlass.Providers;
@@ -18,12 +19,14 @@ public sealed class StatusPoller : IActivityCadencePoller
     private readonly object _cadenceGate = new();
     private readonly object _notificationGate = new();
     private readonly Queue<StatusReport> _notificationQueue = new();
-    private readonly Channel<bool> _refreshRequests = Channel.CreateUnbounded<bool>(
-        new UnboundedChannelOptions
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _cooldowns = new(StringComparer.Ordinal);
+    private readonly Channel<bool> _refreshRequests = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1)
         {
             SingleReader = true,
             SingleWriter = false,
             AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropWrite,
         });
     private StatusReport _current;
     private Task _notificationPump = Task.CompletedTask;
@@ -68,14 +71,17 @@ public sealed class StatusPoller : IActivityCadencePoller
                 .GroupBy(snapshot => snapshot.Id, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
 
-            Task<ProviderSnapshot>[] fetches = _providers
-                .Select(provider => IsEnabled(settings, provider.Id)
-                    ? FetchProviderAsync(provider, previousById.GetValueOrDefault(provider.Id), cancellationToken)
-                    : Task.FromResult(CreateDisabledSnapshot(provider)))
+            Task<ProviderAttempt>[] fetches = _providers
+                .Select(provider => PrepareProviderAttemptAsync(
+                    provider,
+                    previousById.GetValueOrDefault(provider.Id),
+                    IsEnabled(settings, provider.Id),
+                    cancellationToken))
                 .ToArray();
 
-            ProviderSnapshot[] providers = await Task.WhenAll(fetches).ConfigureAwait(false);
+            ProviderAttempt[] attempts = await Task.WhenAll(fetches).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            ProviderSnapshot[] providers = attempts.Select(ApplyAttempt).ToArray();
 
             report = new StatusReport(_timeProvider.GetUtcNow(), providers.ToImmutableArray());
             Volatile.Write(ref _current, report);
@@ -171,10 +177,7 @@ public sealed class StatusPoller : IActivityCadencePoller
 
     public void RequestRefresh()
     {
-        if (!_refreshRequests.Writer.TryWrite(true))
-        {
-            throw new InvalidOperationException("The refresh queue is unavailable.");
-        }
+        _refreshRequests.Writer.TryWrite(true);
     }
 
     public void SetReducedCadence(bool reduced)
@@ -195,6 +198,7 @@ public sealed class StatusPoller : IActivityCadencePoller
 
     private ProviderSnapshot CreateDisabledSnapshot(IStatusProvider provider)
     {
+        _cooldowns.TryRemove(provider.Id, out _);
         _log.Write(LogArea.Provider, LogOutcome.Disabled);
         return new ProviderSnapshot(
             provider.Id,
@@ -208,7 +212,27 @@ public sealed class StatusPoller : IActivityCadencePoller
             0);
     }
 
-    private async Task<ProviderSnapshot> FetchProviderAsync(
+    private Task<ProviderAttempt> PrepareProviderAttemptAsync(
+        IStatusProvider provider,
+        ProviderSnapshot? previous,
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        if (!enabled)
+        {
+            return Task.FromResult(new ProviderAttempt(provider, previous, ProviderAttemptKind.Disabled));
+        }
+
+        if (_cooldowns.TryGetValue(provider.Id, out DateTimeOffset cooldownUntil) &&
+            cooldownUntil > _timeProvider.GetUtcNow())
+        {
+            return Task.FromResult(new ProviderAttempt(provider, previous, ProviderAttemptKind.CoolingDown));
+        }
+
+        return FetchProviderAsync(provider, previous, cancellationToken);
+    }
+
+    private async Task<ProviderAttempt> FetchProviderAsync(
         IStatusProvider provider,
         ProviderSnapshot? previous,
         CancellationToken cancellationToken)
@@ -218,9 +242,8 @@ public sealed class StatusPoller : IActivityCadencePoller
 
         try
         {
-            ProviderSnapshot snapshot = await provider.FetchAsync(linked.Token).ConfigureAwait(false);
-            _log.Write(LogArea.Provider, OutcomeFor(snapshot.Health));
-            return snapshot with { ConsecutiveFailures = 0 };
+            ProviderFetchResult result = await provider.FetchAsync(linked.Token).ConfigureAwait(false);
+            return new ProviderAttempt(provider, previous, ProviderAttemptKind.Completed, result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -228,15 +251,142 @@ public sealed class StatusPoller : IActivityCadencePoller
         }
         catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
         {
-            _log.Write(LogArea.Provider, LogOutcome.TimedOut, exception: exception);
-            return RetainFailure(provider, previous);
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.TimedOut,
+                new ProviderFetchResult(ProviderFetchOutcome.TransientFailure),
+                exception);
         }
         catch (Exception exception)
         {
-            _log.Write(LogArea.Provider, LogOutcome.Failed, exception: exception);
-            return RetainFailure(provider, previous);
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.Failed,
+                new ProviderFetchResult(ProviderFetchOutcome.TransientFailure),
+                exception);
         }
     }
+
+    private ProviderSnapshot ApplyAttempt(ProviderAttempt attempt)
+    {
+        if (attempt.Kind == ProviderAttemptKind.Disabled)
+        {
+            return CreateDisabledSnapshot(attempt.Provider);
+        }
+
+        if (attempt.Kind == ProviderAttemptKind.CoolingDown)
+        {
+            return RetainCooldown(attempt.Provider, attempt.Previous);
+        }
+
+        if (attempt.Kind is ProviderAttemptKind.TimedOut or ProviderAttemptKind.Failed)
+        {
+            _cooldowns.TryRemove(attempt.Provider.Id, out _);
+            ProviderSnapshot retained = RetainFailure(attempt.Provider, attempt.Previous);
+            _log.Write(
+                LogArea.Provider,
+                attempt.Kind == ProviderAttemptKind.TimedOut ? LogOutcome.TimedOut : LogOutcome.Failed,
+                exception: attempt.Exception,
+                providerId: attempt.Provider.Id,
+                providerOutcome: ProviderFetchOutcome.TransientFailure,
+                consecutiveFailures: retained.ConsecutiveFailures);
+            return retained;
+        }
+
+        return ApplyResult(attempt.Provider, attempt.Previous, attempt.Result!);
+    }
+
+    private ProviderSnapshot ApplyResult(
+        IStatusProvider provider,
+        ProviderSnapshot? previous,
+        ProviderFetchResult result)
+    {
+        ProviderSnapshot? snapshot = result.Snapshot;
+        if (snapshot is not null && !string.Equals(snapshot.Id, provider.Id, StringComparison.Ordinal))
+        {
+            _cooldowns.TryRemove(provider.Id, out _);
+            ProviderSnapshot retained = RetainFailure(provider, previous);
+            LogProviderResult(
+                provider,
+                new ProviderFetchResult(ProviderFetchOutcome.InvalidResponse, statusCode: result.StatusCode),
+                retained);
+            return retained;
+        }
+
+        if (result.Outcome == ProviderFetchOutcome.RateLimited)
+        {
+            DateTimeOffset cooldownUntil = _timeProvider.GetUtcNow() + result.RetryAfter!.Value;
+            _cooldowns[provider.Id] = cooldownUntil;
+            ProviderSnapshot retained = RetainFailure(provider, previous);
+            LogProviderResult(provider, result, retained);
+            return retained;
+        }
+
+        _cooldowns.TryRemove(provider.Id, out _);
+        switch (result.Outcome)
+        {
+            case ProviderFetchOutcome.Success:
+            case ProviderFetchOutcome.PartialSuccess:
+            case ProviderFetchOutcome.NotConfigured:
+            case ProviderFetchOutcome.AuthenticationRequired:
+                ProviderSnapshot published = snapshot! with { ConsecutiveFailures = 0 };
+                LogProviderResult(provider, result, published);
+                return published;
+            case ProviderFetchOutcome.TransientFailure:
+                ProviderSnapshot transient = RetainFailure(provider, previous);
+                LogProviderResult(provider, result, transient);
+                return transient;
+            case ProviderFetchOutcome.InvalidResponse:
+                ProviderSnapshot invalid = RetainFailure(provider, previous);
+                LogProviderResult(provider, result, invalid);
+                return invalid;
+            default:
+                throw new InvalidOperationException("Validated provider outcome was not mapped.");
+        }
+    }
+
+    private void LogProviderResult(
+        IStatusProvider provider,
+        ProviderFetchResult result,
+        ProviderSnapshot snapshot)
+    {
+        LogOutcome logOutcome = result.Outcome switch
+        {
+            ProviderFetchOutcome.Success => LogOutcome.Succeeded,
+            ProviderFetchOutcome.PartialSuccess => LogOutcome.Degraded,
+            ProviderFetchOutcome.NotConfigured => LogOutcome.Unreachable,
+            ProviderFetchOutcome.AuthenticationRequired => LogOutcome.AuthExpired,
+            ProviderFetchOutcome.TransientFailure => LogOutcome.Failed,
+            ProviderFetchOutcome.RateLimited => LogOutcome.Failed,
+            ProviderFetchOutcome.InvalidResponse => LogOutcome.Invalid,
+            _ => throw new InvalidOperationException("Validated provider outcome was not mapped."),
+        };
+        int? cooldownSeconds = result.RetryAfter is TimeSpan retryAfter
+            ? checked((int)Math.Ceiling(retryAfter.TotalSeconds))
+            : null;
+        _log.Write(
+            LogArea.Provider,
+            logOutcome,
+            statusCode: (int?)result.StatusCode,
+            providerId: provider.Id,
+            providerOutcome: result.Outcome,
+            cooldownSeconds: cooldownSeconds,
+            consecutiveFailures: snapshot.ConsecutiveFailures);
+    }
+
+    private ProviderSnapshot RetainCooldown(IStatusProvider provider, ProviderSnapshot? previous) =>
+        previous ?? new ProviderSnapshot(
+            provider.Id,
+            provider.Label,
+            HealthState.Unreachable,
+            null,
+            ImmutableArray<UsageWindow>.Empty,
+            ImmutableArray<InfoLine>.Empty,
+            null,
+            _timeProvider.GetUtcNow(),
+            1);
 
     private ProviderSnapshot RetainFailure(IStatusProvider provider, ProviderSnapshot? previous)
     {
@@ -267,16 +417,6 @@ public sealed class StatusPoller : IActivityCadencePoller
                 ConsecutiveFailures = failures,
             };
     }
-
-    private static LogOutcome OutcomeFor(HealthState health) => health switch
-    {
-        HealthState.Ok => LogOutcome.Succeeded,
-        HealthState.Degraded => LogOutcome.Degraded,
-        HealthState.AuthExpired => LogOutcome.AuthExpired,
-        HealthState.Unreachable => LogOutcome.Unreachable,
-        HealthState.Disabled => LogOutcome.Disabled,
-        _ => throw new InvalidOperationException("Validated health state was not mapped."),
-    };
 
     private TimeSpan GetCadence()
     {
@@ -441,4 +581,20 @@ public sealed class StatusPoller : IActivityCadencePoller
             return _notificationPump;
         }
     }
+
+    private enum ProviderAttemptKind
+    {
+        Completed,
+        Disabled,
+        CoolingDown,
+        TimedOut,
+        Failed,
+    }
+
+    private sealed record ProviderAttempt(
+        IStatusProvider Provider,
+        ProviderSnapshot? Previous,
+        ProviderAttemptKind Kind,
+        ProviderFetchResult? Result = null,
+        Exception? Exception = null);
 }

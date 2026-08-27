@@ -59,13 +59,26 @@ public sealed class ClaudeProvider : IStatusProvider
             bufferSize: 1,
             FileOptions.SequentialScan);
 
-    public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
+    public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
-        Credential credential = ReadCredential();
+        Credential credential;
+        try
+        {
+            credential = ReadCredential();
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.NotConfigured,
+                Snapshot(HealthState.Unreachable, null, [], [], null, fetchedAt));
+        }
+
         if (credential.ExpiresAt <= fetchedAt)
         {
-            return Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt);
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.AuthenticationRequired,
+                Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt));
         }
 
         using var client = new HttpClient(_handler, disposeHandler: false);
@@ -73,50 +86,85 @@ public sealed class ClaudeProvider : IStatusProvider
             .ConfigureAwait(false);
         if (IsAuthExpired(usageResponse.StatusCode))
         {
-            return Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt);
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.AuthenticationRequired,
+                Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt),
+                usageResponse.StatusCode);
         }
 
-        usageResponse.EnsureSuccessStatusCode();
-        if (!IsJson(usageResponse))
+        TimeSpan? retryAfter = ProviderHttpSafety.GetRetryAfter(usageResponse, fetchedAt);
+        if (retryAfter is not null)
         {
-            throw new InvalidDataException("Claude usage response was not JSON.");
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.RateLimited,
+                statusCode: usageResponse.StatusCode,
+                retryAfter: retryAfter);
         }
 
-        using JsonDocument usage = JsonDocument.Parse(
-            await usageResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
+        if (!usageResponse.IsSuccessStatusCode)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.TransientFailure,
+                statusCode: usageResponse.StatusCode);
+        }
+
+        JsonDocument usage;
+        try
+        {
+            usage = await ProviderHttpSafety.ReadJsonAsync(usageResponse, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.InvalidResponse,
+                statusCode: usageResponse.StatusCode);
+        }
+
+        using (usage)
+        {
         ImmutableArray<UsageWindow> windows = ReadWindows(usage.RootElement);
         ImmutableArray<InfoLine> info = ReadSpend(usage.RootElement);
         ProfileResult profile = await GetProfileAsync(client, credential.AccessToken, fetchedAt, cancellationToken)
             .ConfigureAwait(false);
         if (profile.AuthExpired)
         {
-            return Snapshot(
-                HealthState.AuthExpired,
-                profile.PlanLabel,
-                windows,
-                info,
-                "re-auth: run claude login",
-                fetchedAt);
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.AuthenticationRequired,
+                Snapshot(
+                    HealthState.AuthExpired,
+                    profile.PlanLabel,
+                    windows,
+                    info,
+                    "re-auth: run claude login",
+                    fetchedAt),
+                profile.StatusCode);
         }
 
         if (profile.Error is not null)
         {
-            return Snapshot(
-                HealthState.Degraded,
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.PartialSuccess,
+                Snapshot(
+                    HealthState.Degraded,
+                    profile.PlanLabel,
+                    windows,
+                    info,
+                    profile.Error,
+                    fetchedAt),
+                profile.StatusCode);
+        }
+
+        return new ProviderFetchResult(
+            ProviderFetchOutcome.Success,
+            Snapshot(
+                HealthState.Ok,
                 profile.PlanLabel,
                 windows,
                 info,
-                profile.Error,
-                fetchedAt);
+                null,
+                fetchedAt),
+            usageResponse.StatusCode);
         }
-
-        return Snapshot(
-            HealthState.Ok,
-            profile.PlanLabel,
-            windows,
-            info,
-            null,
-            fetchedAt);
     }
 
     private Credential ReadCredential()
@@ -133,7 +181,7 @@ public sealed class ClaudeProvider : IStatusProvider
     {
         if (_profileCachedAt.AddHours(1) > now)
         {
-            return new ProfileResult(_cachedPlanLabel, false, null);
+            return new ProfileResult(_cachedPlanLabel, false, null, null);
         }
 
         try
@@ -142,26 +190,42 @@ public sealed class ClaudeProvider : IStatusProvider
                 .ConfigureAwait(false);
             if (IsAuthExpired(response.StatusCode))
             {
-                return new ProfileResult(_cachedPlanLabel, true, null);
+                return new ProfileResult(_cachedPlanLabel, true, null, response.StatusCode);
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed");
+                return new ProfileResult(
+                    _cachedPlanLabel,
+                    false,
+                    "Claude profile request failed",
+                    response.StatusCode);
             }
 
-            if (!IsJson(response))
+            JsonDocument profile;
+            try
             {
-                return new ProfileResult(_cachedPlanLabel, false, "Claude profile response was not JSON");
+                profile = await ProviderHttpSafety
+                    .ReadJsonAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidDataException)
+            {
+                return new ProfileResult(
+                    _cachedPlanLabel,
+                    false,
+                    "Claude profile response was not JSON",
+                    response.StatusCode);
             }
 
-            using JsonDocument profile = JsonDocument.Parse(
-                await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
+            using (profile)
+            {
             _cachedPlanLabel = TryGetObject(profile.RootElement, "organization") is JsonElement organization
                 ? TryGetString(organization, "seat_tier")
                 : null;
             _profileCachedAt = now;
-            return new ProfileResult(_cachedPlanLabel, false, null);
+            return new ProfileResult(_cachedPlanLabel, false, null, response.StatusCode);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -169,7 +233,7 @@ public sealed class ClaudeProvider : IStatusProvider
         }
         catch (Exception)
         {
-            return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed");
+            return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed", null);
         }
     }
 
@@ -241,9 +305,6 @@ public sealed class ClaudeProvider : IStatusProvider
     private static bool IsAuthExpired(HttpStatusCode statusCode) =>
         statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
 
-    private static bool IsJson(HttpResponseMessage response) =>
-        string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase);
-
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
     {
         value = default;
@@ -313,7 +374,11 @@ public sealed class ClaudeProvider : IStatusProvider
 
     private sealed record Credential(string AccessToken, DateTimeOffset ExpiresAt);
 
-    private sealed record ProfileResult(string? PlanLabel, bool AuthExpired, string? Error);
+    private sealed record ProfileResult(
+        string? PlanLabel,
+        bool AuthExpired,
+        string? Error,
+        HttpStatusCode? StatusCode);
 
     private sealed class CredentialScanner(Stream stream)
     {

@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -17,7 +19,7 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
 
     public string Label => "Ollama";
 
-    public async Task<ProviderSnapshot> FetchAsync(CancellationToken cancellationToken)
+    public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
 
@@ -26,43 +28,88 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
             using var client = new HttpClient(_handler, disposeHandler: false);
             using HttpResponseMessage versionResponse = await SendAsync(client, VersionUri, cancellationToken)
                 .ConfigureAwait(false);
-            versionResponse.EnsureSuccessStatusCode();
-            using JsonDocument version = JsonDocument.Parse(
-                await versionResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
+            ProviderFetchResult? versionFailure = FailureFor(versionResponse, fetchedAt);
+            if (versionFailure is not null)
+            {
+                return versionFailure;
+            }
+
+            using JsonDocument version = await ProviderHttpSafety
+                .ReadJsonAsync(versionResponse, cancellationToken)
+                .ConfigureAwait(false);
+            if (version.RootElement.ValueKind != JsonValueKind.Object ||
+                !version.RootElement.TryGetProperty("version", out JsonElement versionValue) ||
+                versionValue.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(versionValue.GetString()))
+            {
+                return new ProviderFetchResult(
+                    ProviderFetchOutcome.InvalidResponse,
+                    statusCode: versionResponse.StatusCode);
+            }
 
             using HttpResponseMessage processResponse = await SendAsync(client, ProcessUri, cancellationToken)
                 .ConfigureAwait(false);
-            processResponse.EnsureSuccessStatusCode();
-            using JsonDocument processes = JsonDocument.Parse(
-                await processResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
+            ProviderFetchResult? processFailure = FailureFor(processResponse, fetchedAt);
+            if (processFailure is not null)
+            {
+                return processFailure;
+            }
 
-            return new ProviderSnapshot(
-                Id,
-                Label,
-                HealthState.Ok,
-                null,
-                ImmutableArray<UsageWindow>.Empty,
-                [
-                    new InfoLine("Version", version.RootElement.GetProperty("version").GetString()!),
-                    new InfoLine("Loaded models", processes.RootElement.GetProperty("models").GetArrayLength().ToString())
-                ],
-                null,
-                fetchedAt,
-                0);
+            using JsonDocument processes = await ProviderHttpSafety
+                .ReadJsonAsync(processResponse, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (processes.RootElement.ValueKind != JsonValueKind.Object ||
+                !processes.RootElement.TryGetProperty("models", out JsonElement models) ||
+                models.ValueKind != JsonValueKind.Array)
+            {
+                return new ProviderFetchResult(
+                    ProviderFetchOutcome.InvalidResponse,
+                    statusCode: processResponse.StatusCode);
+            }
+
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.Success,
+                new ProviderSnapshot(
+                    Id,
+                    Label,
+                    HealthState.Ok,
+                    null,
+                    ImmutableArray<UsageWindow>.Empty,
+                    [
+                        new InfoLine("Version", versionValue.GetString()!),
+                        new InfoLine("Loaded models", models.GetArrayLength().ToString())
+                    ],
+                    null,
+                    fetchedAt,
+                    0));
         }
         catch (HttpRequestException)
         {
-            return new ProviderSnapshot(
-                Id,
-                Label,
-                HealthState.Unreachable,
-                null,
-                ImmutableArray<UsageWindow>.Empty,
-                ImmutableArray<InfoLine>.Empty,
-                null,
-                fetchedAt,
-                0);
+            return new ProviderFetchResult(ProviderFetchOutcome.TransientFailure);
         }
+        catch (InvalidDataException)
+        {
+            return new ProviderFetchResult(ProviderFetchOutcome.InvalidResponse);
+        }
+    }
+
+    private static ProviderFetchResult? FailureFor(HttpResponseMessage response, DateTimeOffset now)
+    {
+        TimeSpan? retryAfter = ProviderHttpSafety.GetRetryAfter(response, now);
+        if (retryAfter is not null)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.RateLimited,
+                statusCode: response.StatusCode,
+                retryAfter: retryAfter);
+        }
+
+        return response.IsSuccessStatusCode
+            ? null
+            : new ProviderFetchResult(
+                ProviderFetchOutcome.TransientFailure,
+                statusCode: response.StatusCode);
     }
 
     private static async Task<HttpResponseMessage> SendAsync(

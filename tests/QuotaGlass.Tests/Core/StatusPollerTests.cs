@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Net;
 using QuotaGlass.Core;
 using QuotaGlass.Model;
 using QuotaGlass.Providers;
@@ -267,6 +268,136 @@ public sealed class StatusPollerTests : IDisposable
         Assert.Equal(0, snapshot.ConsecutiveFailures);
     }
 
+    [Theory]
+    [InlineData(ProviderFetchOutcome.TransientFailure)]
+    [InlineData(ProviderFetchOutcome.InvalidResponse)]
+    public async Task PollOnceAsync_ReturnedFailureRetainsLastGoodAndIncrementsFailures(
+        ProviderFetchOutcome outcome)
+    {
+        // Break caught: a returned failure is mistaken for a successful fetch and resets failure state.
+        ProviderSnapshot good = FakeStatusProvider.Snapshot(
+            "codex",
+            planLabel: "Pro",
+            windows: [new UsageWindow("5h", 42, null, Severity.Normal)]);
+        FakeStatusProvider provider = FakeStatusProvider.SequenceResults(
+            "codex",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, good)),
+                _ => Task.FromResult(new ProviderFetchResult(outcome)),
+            ]);
+        StatusPoller poller = CreatePoller([provider]);
+        await poller.PollOnceAsync(CancellationToken.None);
+
+        ProviderSnapshot failed = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        AssertRetained(good, failed, HealthState.Ok, 1);
+    }
+
+    [Theory]
+    [InlineData(ProviderFetchOutcome.PartialSuccess, HealthState.Degraded)]
+    [InlineData(ProviderFetchOutcome.NotConfigured, HealthState.Unreachable)]
+    [InlineData(ProviderFetchOutcome.AuthenticationRequired, HealthState.AuthExpired)]
+    public async Task PollOnceAsync_PublishableOutcomePublishesSnapshotAndResetsFailures(
+        ProviderFetchOutcome outcome,
+        HealthState health)
+    {
+        // Break caught: an expected publishable outcome is retained as a transport failure.
+        ProviderSnapshot fresh = FakeStatusProvider.Snapshot("claude", health: health, consecutiveFailures: 8);
+        StatusPoller poller = CreatePoller([
+            FakeStatusProvider.ReturningResult("claude", new ProviderFetchResult(outcome, fresh)),
+        ]);
+
+        ProviderSnapshot published = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.Equal(health, published.Health);
+        Assert.Equal(0, published.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_WrongProviderIdIsInvalidAndRetainsLastGood()
+    {
+        // Break caught: a provider can replace another provider's state by returning the wrong ID.
+        ProviderSnapshot good = FakeStatusProvider.Snapshot("codex", planLabel: "Pro");
+        ProviderSnapshot wrong = FakeStatusProvider.Snapshot("claude", planLabel: "wrong");
+        FakeStatusProvider provider = FakeStatusProvider.SequenceResults(
+            "codex",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, good)),
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, wrong)),
+            ]);
+        StatusPoller poller = CreatePoller([provider]);
+        await poller.PollOnceAsync(CancellationToken.None);
+
+        ProviderSnapshot retained = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        AssertRetained(good, retained, HealthState.Ok, 1);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_RateLimitSkipsOnlyCoolingProviderUntilDeadline()
+    {
+        // Break caught: manual polls bypass a cooldown or one cooled provider suppresses other providers.
+        var time = new RecordingTimeProvider();
+        ProviderSnapshot recovered = FakeStatusProvider.Snapshot("codex", planLabel: "recovered");
+        FakeStatusProvider cooled = FakeStatusProvider.SequenceResults(
+            "codex",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.RateLimited,
+                    statusCode: HttpStatusCode.TooManyRequests,
+                    retryAfter: TimeSpan.FromMinutes(5))),
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, recovered)),
+            ]);
+        FakeStatusProvider healthy = FakeStatusProvider.Returning(
+            "ollama",
+            FakeStatusProvider.Snapshot("ollama"));
+        StatusPoller poller = CreatePoller([cooled, healthy], timeProvider: time);
+
+        await poller.PollOnceAsync(CancellationToken.None);
+        ProviderSnapshot[] duringCooldown = (await poller.PollOnceAsync(CancellationToken.None)).Providers.ToArray();
+        int cooledInvocationsDuringCooldown = cooled.InvocationCount;
+        int healthyInvocationsDuringCooldown = healthy.InvocationCount;
+        time.Advance(TimeSpan.FromMinutes(5));
+        ProviderSnapshot[] afterCooldown = (await poller.PollOnceAsync(CancellationToken.None)).Providers.ToArray();
+
+        Assert.Equal(1, cooledInvocationsDuringCooldown);
+        Assert.Equal(2, healthyInvocationsDuringCooldown);
+        Assert.Equal(1, Assert.Single(duringCooldown, snapshot => snapshot.Id == "codex").ConsecutiveFailures);
+        Assert.Equal("recovered", Assert.Single(afterCooldown, snapshot => snapshot.Id == "codex").PlanLabel);
+        Assert.Equal(2, cooled.InvocationCount);
+        Assert.Equal(3, healthy.InvocationCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_CallerCancellationDoesNotCommitCompletedProviderCooldown()
+    {
+        // Break caught: one completed provider mutates cooldown state before another provider observes cancellation.
+        ProviderSnapshot recovered = FakeStatusProvider.Snapshot("codex", planLabel: "eligible");
+        FakeStatusProvider rateLimited = FakeStatusProvider.SequenceResults(
+            "codex",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.RateLimited,
+                    statusCode: HttpStatusCode.TooManyRequests,
+                    retryAfter: TimeSpan.FromMinutes(5))),
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, recovered)),
+            ]);
+        FakeStatusProvider blocking = FakeStatusProvider.Blocking("ollama");
+        StatusPoller poller = CreatePoller([rateLimited, blocking]);
+        using var cancellation = new CancellationTokenSource();
+
+        Task<StatusReport> canceledPoll = poller.PollOnceAsync(cancellation.Token);
+        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledPoll);
+        blocking.CompleteOk();
+
+        ProviderSnapshot[] next = (await poller.PollOnceAsync(CancellationToken.None)).Providers.ToArray();
+
+        Assert.Equal(2, rateLimited.InvocationCount);
+        Assert.Equal("eligible", Assert.Single(next, snapshot => snapshot.Id == "codex").PlanLabel);
+    }
+
     [Fact]
     public async Task PollOnceAsync_PropagatesCallerCancellation()
     {
@@ -332,21 +463,29 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
-    public async Task RequestRefresh_BackToBackRequestsEachProduceAPoll()
+    public async Task RequestRefresh_RepeatedRequestsLeaveAtMostOnePendingPoll()
     {
-        // Break caught: a second request arriving while the first signal is consumed is lost.
+        // Break caught: repeated refresh requests queue redundant full polls.
         var time = new RecordingTimeProvider();
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         FakeStatusProvider provider = new(
             "claude",
-            (invocation, _) =>
+            async (invocation, cancellationToken) =>
             {
+                if (invocation == 1)
+                {
+                    firstStarted.TrySetResult();
+                    await releaseFirst.Task.WaitAsync(cancellationToken);
+                }
+
                 if (invocation == 2)
                 {
                     secondStarted.TrySetResult();
                 }
 
-                return Task.FromResult(FakeStatusProvider.Snapshot("claude"));
+                return FakeStatusProvider.Snapshot("claude");
             });
         StatusPoller poller = CreatePoller([provider], timeProvider: time);
         using var cancellation = new CancellationTokenSource();
@@ -356,8 +495,15 @@ public sealed class StatusPollerTests : IDisposable
         try
         {
             poller.RequestRefresh();
-            poller.RequestRefresh();
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            for (int request = 0; request < 20; request++)
+            {
+                poller.RequestRefresh();
+            }
+
+            releaseFirst.TrySetResult();
             await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await Task.Delay(50);
 
             Assert.Equal(2, provider.InvocationCount);
         }
@@ -939,6 +1085,11 @@ public sealed class StatusPollerTests : IDisposable
     {
         private readonly object _gate = new();
         private readonly List<RecordingTimer> _timers = [];
+        private DateTimeOffset _utcNow = DateTimeOffset.Parse("2026-08-27T12:00:00Z");
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
 
         public override ITimer CreateTimer(
             TimerCallback callback,
