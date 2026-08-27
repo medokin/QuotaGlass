@@ -48,7 +48,7 @@ jobs:
   build:
     name: Build, test, and publish
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_NOLOGO: true
@@ -64,7 +64,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore QuotaGlass.slnx
+        shell: pwsh
+        run: |
+          dotnet restore QuotaGlass.slnx
+          dotnet restore src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj
 
       - name: Build
         run: dotnet build QuotaGlass.slnx -c Release --no-restore
@@ -83,11 +86,56 @@ jobs:
             throw "Expected only QuotaGlass.exe, found: $($files.Name -join ', ')"
           }
 
+      - name: Publish MSI lifecycle payloads
+        shell: pwsh
+        run: |
+          foreach ($version in @('0.0.1', '0.0.2')) {
+            dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+              -c Release `
+              --no-restore `
+              -p:PublishProfile=win-x64-self-contained `
+              -p:Version=$version `
+              -p:FileVersion=$version.0 `
+              -p:InformationalVersion=$version `
+              -p:IncludeSourceRevisionInInformationalVersion=false `
+              -o "artifacts/QuotaGlass-msi-payload-$version"
+          }
+
+      - name: Build MSI lifecycle packages
+        shell: pwsh
+        run: |
+          foreach ($version in @('0.0.1', '0.0.2')) {
+            dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj `
+              -c Release `
+              --no-restore `
+              -p:MsiVersion=$version `
+              -p:PayloadDir="$pwd/artifacts/QuotaGlass-msi-payload-$version" `
+              -p:OutputPath="$pwd/artifacts/msi-$version/"
+          }
+
+      - name: Test MSI metadata and lifecycle
+        shell: pwsh
+        run: |
+          ./eng/installer/Test-MsiLifecycle.ps1 `
+            -BaseMsiPath artifacts/msi-0.0.1/QuotaGlass-v0.0.1-win-x64.msi `
+            -BaseVersion 0.0.1 `
+            -UpgradeMsiPath artifacts/msi-0.0.2/QuotaGlass-v0.0.2-win-x64.msi `
+            -UpgradeVersion 0.0.2
+
       - name: Upload application
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: QuotaGlass-win-x64
           path: artifacts/QuotaGlass-win-x64/QuotaGlass.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: QuotaGlass-msi-win-x64
+          path: artifacts/msi-0.0.2/QuotaGlass-v0.0.2-win-x64.msi
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

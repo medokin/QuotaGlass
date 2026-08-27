@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>QuotaGlass.InstallerActions</AssemblyName>
+    <RootNamespace>QuotaGlass.InstallerActions</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Dtf.CustomAction" Version="5.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="CustomAction.config" />
+    <Content Include="CustomAction.config" />
+    <Compile Include="..\QuotaGlass\Platform\InstallerShutdownSignalName.cs"
+             Link="InstallerShutdownSignalName.cs" />
+  </ItemGroup>
+</Project>

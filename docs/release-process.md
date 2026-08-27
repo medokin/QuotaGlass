@@ -75,6 +75,8 @@ request code.
 
    - `QuotaGlass-vX.Y.Z-win-x64.zip`
    - `QuotaGlass-vX.Y.Z-win-x64.sha256`
+   - `QuotaGlass-vX.Y.Z-win-x64.msi`
+   - `QuotaGlass-vX.Y.Z-win-x64.msi.sha256`
 
 8. Download the workflow artifact and perform the applicable checks from
    [manual-test-checklist.md](manual-test-checklist.md) against that exact
@@ -84,11 +86,14 @@ request code.
    attaches the verified assets and publishes the draft GitHub Release, at
    which point release immutability locks the tag and assets.
 
-The ZIP contains only `QuotaGlass.exe`. The checksum file hashes the ZIP and
-uses this format:
+The ZIP contains only the framework-dependent `QuotaGlass.exe`. The MSI embeds
+a separate self-contained `QuotaGlass.exe`, installs per-user without elevation,
+and does not require a separately installed .NET runtime. Each checksum file
+hashes the adjacent package and uses one of these formats:
 
 ```text
 <lowercase-sha256>  QuotaGlass-vX.Y.Z-win-x64.zip
+<lowercase-sha256>  QuotaGlass-vX.Y.Z-win-x64.msi
 ```
 
 Published tags, releases, and assets are immutable. Correct a published release
@@ -112,11 +117,13 @@ Recovery is intentionally narrow. The workflow requires the tag to match the
 root version in `.release-please-manifest.json`, requires an existing draft
 GitHub Release, and requires the tagged commit to be contained in `master`.
 
-The finalization job safely handles a previous partial upload. It uploads a
-missing asset, accepts an existing asset only when its SHA256 matches the new
-candidate, and fails on a mismatch. It never overwrites an asset. The draft is
-published only after its asset list contains exactly the expected ZIP and
-checksum.
+The Windows package job safely handles a previous partial upload. An existing
+ZIP or MSI becomes the canonical package for that draft, and an existing
+checksum must verify it. If only a package exists, the workflow creates its
+missing checksum. If only a checksum exists, it must verify the rebuilt package.
+The canonical ZIP inventory and MSI metadata are validated again before the
+release-candidate artifact is uploaded. Finalization never overwrites existing
+assets and publishes only the exact expected ZIP, MSI, and two checksums.
 
 Do not merge another generated release pull request while a draft release is
 awaiting recovery. Workflow concurrency serializes the automated release lane,
