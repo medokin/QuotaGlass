@@ -336,7 +336,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore QuotaGlass.slnx
+        shell: pwsh
+        run: |
+          dotnet restore QuotaGlass.slnx
+          dotnet restore src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj
 
       - name: Build
         shell: pwsh
@@ -369,6 +372,26 @@ jobs:
               -p:PublishProfile=win-x64 `
               -o artifacts/QuotaGlass-win-x64 `
               @versionProperties
+          dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+              -c Release `
+              --no-restore `
+              -p:PublishProfile=win-x64-self-contained `
+              -o artifacts/QuotaGlass-msi-payload `
+              @versionProperties
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj `
+              -c Release `
+              --no-restore `
+              -p:MsiVersion=$env:RELEASE_VERSION `
+              -p:PayloadDir="$pwd/artifacts/QuotaGlass-msi-payload" `
+              -p:OutputPath="$pwd/artifacts/msi/"
+
+          ./eng/installer/Test-MsiMetadata.ps1 `
+              -MsiPath "artifacts/msi/QuotaGlass-v$env:RELEASE_VERSION-win-x64.msi" `
+              -ExpectedVersion $env:RELEASE_VERSION
 
       - name: Verify and package release
         shell: pwsh
@@ -378,6 +401,7 @@ jobs:
           $assemblyPath = Resolve-Path `
               'src/QuotaGlass/bin/Release/net10.0-windows10.0.19041.0/win-x64/QuotaGlass.dll'
           $publishDirectory = Resolve-Path 'artifacts/QuotaGlass-win-x64'
+          $msiPayloadDirectory = Resolve-Path 'artifacts/QuotaGlass-msi-payload'
           $executablePath = Join-Path $publishDirectory 'QuotaGlass.exe'
 
           $assemblyName = [Reflection.AssemblyName]::GetAssemblyName($assemblyPath)
@@ -398,6 +422,11 @@ jobs:
               throw "Expected only QuotaGlass.exe, found: $($publishedFiles.FullName -join ', ')"
           }
 
+          $msiPayloadFiles = @(Get-ChildItem -LiteralPath $msiPayloadDirectory -File -Recurse)
+          if ($msiPayloadFiles.Count -ne 1 -or $msiPayloadFiles[0].Name -ne 'QuotaGlass.exe') {
+              throw "Expected one self-contained MSI payload, found: $($msiPayloadFiles.FullName -join ', ')"
+          }
+
           $executableInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($executablePath)
           if ($executableInfo.FileVersion -ne $expectedFileVersion) {
               throw "EXE FileVersion must be $expectedFileVersion, found $($executableInfo.FileVersion)."
@@ -409,8 +438,12 @@ jobs:
           $releaseDirectory = New-Item -ItemType Directory -Path artifacts/release -Force
           $archiveName = "QuotaGlass-$env:RELEASE_TAG-win-x64.zip"
           $checksumName = "QuotaGlass-$env:RELEASE_TAG-win-x64.sha256"
+          $msiName = "QuotaGlass-$env:RELEASE_TAG-win-x64.msi"
+          $msiChecksumName = "$msiName.sha256"
           $archivePath = Join-Path $releaseDirectory $archiveName
           $checksumPath = Join-Path $releaseDirectory $checksumName
+          $msiPath = Join-Path $releaseDirectory $msiName
+          $msiChecksumPath = Join-Path $releaseDirectory $msiChecksumName
 
           Compress-Archive `
               -LiteralPath $executablePath `
@@ -434,6 +467,15 @@ jobs:
               "$hash  $archiveName`n",
               [Text.UTF8Encoding]::new($false))
 
+          Copy-Item `
+              -LiteralPath "artifacts/msi/QuotaGlass-v$env:RELEASE_VERSION-win-x64.msi" `
+              -Destination $msiPath
+          $msiHash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+              $msiChecksumPath,
+              "$msiHash  $msiName`n",
+              [Text.UTF8Encoding]::new($false))
+
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -441,6 +483,8 @@ jobs:
           path: |
             artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.zip
             artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.sha256
+            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.msi
+            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.msi.sha256
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -473,8 +517,11 @@ jobs:
 
           archive="QuotaGlass-${RELEASE_TAG}-win-x64.zip"
           checksum="QuotaGlass-${RELEASE_TAG}-win-x64.sha256"
+          msi="QuotaGlass-${RELEASE_TAG}-win-x64.msi"
+          msi_checksum="${msi}.sha256"
           cd artifacts/release
           sha256sum --check "${checksum}"
+          sha256sum --check "${msi_checksum}"
           mapfile -t entries < <(unzip -Z1 "${archive}")
           if [[ "${#entries[@]}" -ne 1 || "${entries[0]}" != 'QuotaGlass.exe' ]]; then
             echo "ZIP must contain only QuotaGlass.exe: ${entries[*]}" >&2
@@ -514,10 +561,12 @@ jobs:
 
           archive="QuotaGlass-${RELEASE_TAG}-win-x64.zip"
           checksum="QuotaGlass-${RELEASE_TAG}-win-x64.sha256"
+          msi="QuotaGlass-${RELEASE_TAG}-win-x64.msi"
+          msi_checksum="${msi}.sha256"
           compare_root="${RUNNER_TEMP}/release-assets"
           mkdir -p "${compare_root}"
 
-          for asset_name in "${archive}" "${checksum}"; do
+          for asset_name in "${archive}" "${checksum}" "${msi}" "${msi_checksum}"; do
             asset_path="artifacts/release/${asset_name}"
             if jq -e --arg name "${asset_name}" \
               'any(.assets[]; .name == $name)' <<<"${release_json}" >/dev/null; then
@@ -554,7 +603,7 @@ jobs:
             jq -r '.assets[].name' <<<"${release_json}" | LC_ALL=C sort
           )
           mapfile -t expected_assets < <(
-            printf '%s\n' "${archive}" "${checksum}" | LC_ALL=C sort
+            printf '%s\n' "${archive}" "${checksum}" "${msi}" "${msi_checksum}" | LC_ALL=C sort
           )
           if [[ "${actual_assets[*]}" != "${expected_assets[*]}" ]]; then
             echo "Unexpected release assets: ${actual_assets[*]}" >&2
