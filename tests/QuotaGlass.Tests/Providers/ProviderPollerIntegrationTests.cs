@@ -1,4 +1,5 @@
 using System.Net;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using QuotaGlass.Core;
@@ -124,6 +125,334 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         Assert.Equal(0, recovered.ConsecutiveFailures);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task OpenCodeCompanySeatSelectionChangeDoesNotRetainPreviousWorkspaceData(
+        bool changeAccount,
+        bool changeWorkspace)
+    {
+        // Catches a failed first request for a new active workspace showing the previous member's budget.
+        DateTimeOffset reset = DateTimeOffset.UtcNow.AddDays(20);
+        OpenCodeConsoleActiveWorkspace firstWorkspace = new(
+            "account-first",
+            "access-first",
+            "org-first",
+            DateTimeOffset.UtcNow.AddHours(1));
+        OpenCodeConsoleActiveWorkspace secondWorkspace = new(
+            changeAccount ? "account-second" : "account-first",
+            "access-second",
+            changeWorkspace ? "org-second" : "org-first",
+            DateTimeOffset.UtcNow.AddHours(1));
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new SequencedWorkspaceReader(firstWorkspace, secondWorkspace),
+            new SequencedCompanySeatClient(
+                new OpenCodeCompanySeatFetchResult(
+                    OpenCodeCompanySeatFetchOutcome.Success,
+                    new OpenCodeCompanySeatBudget(
+                        new BigInteger(1_000_000_000),
+                        new BigInteger(250_000_000),
+                        false,
+                        reset,
+                        "default")),
+                new OpenCodeCompanySeatFetchResult(
+                    OpenCodeCompanySeatFetchOutcome.InvalidResponse,
+                    StatusCode: HttpStatusCode.OK)));
+        AppSettings settings = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                provider.Id,
+                new ProviderSettings(true)),
+        };
+        var poller = new StatusPoller(
+            [provider],
+            () => settings,
+            new RollingFileLog(Path.Combine(_directory.Path, "company-seat-selection.log")));
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot changed = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.NotEmpty(first.Windows);
+        Assert.Empty(changed.Windows);
+        Assert.Empty(changed.Info);
+        Assert.Equal(1, changed.ConsecutiveFailures);
+        Assert.NotEqual(first.FetchedAt, changed.FetchedAt);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OpenCodeCompanySeatTransportFailureRetainsOnlyTheSameWorkspaceData(
+        bool selectionChanges)
+    {
+        OpenCodeConsoleActiveWorkspace firstWorkspace = Workspace("account-first", "org-first");
+        OpenCodeConsoleActiveWorkspace nextWorkspace = selectionChanges
+            ? Workspace("account-second", "org-second")
+            : firstWorkspace with { AccessToken = "access-refreshed" };
+        int request = 0;
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new SequencedWorkspaceReader(firstWorkspace, nextWorkspace),
+            new DelegatingCompanySeatClient((_, _, _) => Interlocked.Increment(ref request) switch
+            {
+                1 => Task.FromResult(SuccessfulBudget(25)),
+                2 => throw new HttpRequestException("synthetic transport failure"),
+                _ => throw new InvalidOperationException("Unexpected client request."),
+            }));
+        StatusPoller poller = CreateCompanySeatPoller(provider);
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot failed = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        if (selectionChanges)
+        {
+            Assert.Empty(failed.Windows);
+            Assert.Empty(failed.Info);
+            Assert.Equal(1, failed.ConsecutiveFailures);
+        }
+        else
+        {
+            AssertRetained(first, failed, HealthState.Ok, 1);
+        }
+    }
+
+    [Fact]
+    public async Task OpenCodeCompanySeatTimeoutAfterSelectionChangeClearsPreviousWorkspaceData()
+    {
+        int request = 0;
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new SequencedWorkspaceReader(
+                Workspace("account-first", "org-first"),
+                Workspace("account-second", "org-second")),
+            new DelegatingCompanySeatClient(async (_, _, cancellationToken) =>
+            {
+                if (Interlocked.Increment(ref request) == 1)
+                {
+                    return SuccessfulBudget(25);
+                }
+
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                throw new InvalidOperationException("Unreachable.");
+            }));
+        StatusPoller poller = CreateCompanySeatPoller(provider, TimeSpan.FromMilliseconds(50));
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot timedOut = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2))).Providers);
+
+        Assert.NotEmpty(first.Windows);
+        Assert.Empty(timedOut.Windows);
+        Assert.Empty(timedOut.Info);
+        Assert.Equal(1, timedOut.ConsecutiveFailures);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenCodeCompanySeatDiscoveryFailureClearsPreviousWorkspaceData(
+        bool invalid)
+    {
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new SequencedWorkspaceResultReader(
+                new(OpenCodeConsoleActiveWorkspaceReadOutcome.Success, Workspace("account-first", "org-first")),
+                new(invalid
+                    ? OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse
+                    : OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure)),
+            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+        StatusPoller poller = CreateCompanySeatPoller(provider);
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot failed = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.NotEmpty(first.Windows);
+        Assert.Empty(failed.Windows);
+        Assert.Empty(failed.Info);
+        Assert.Equal(1, failed.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task OpenCodeCompanySeatDiscoveryExceptionClearsPreviousWorkspaceData()
+    {
+        int read = 0;
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            null,
+            new DelegatingWorkspaceReader(_ => Interlocked.Increment(ref read) switch
+            {
+                1 => Task.FromResult(new OpenCodeConsoleActiveWorkspaceReadResult(
+                    OpenCodeConsoleActiveWorkspaceReadOutcome.Success,
+                    Workspace("account-first", "org-first"))),
+                2 => throw new IOException("synthetic command failure"),
+                _ => throw new InvalidOperationException("Unexpected workspace read."),
+            }),
+            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+        StatusPoller poller = CreateCompanySeatPoller(provider);
+
+        ProviderSnapshot first = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot failed = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.NotEmpty(first.Windows);
+        Assert.Empty(failed.Windows);
+        Assert.Empty(failed.Info);
+        Assert.Equal(1, failed.ConsecutiveFailures);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenCodeCompanySeatCooldownRevalidatesScopeWithoutBypassingRetryAfter(
+        bool selectionChanges)
+    {
+        var time = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        OpenCodeConsoleActiveWorkspace first = Workspace("account-first", "org-first");
+        OpenCodeConsoleActiveWorkspace current = selectionChanges
+            ? Workspace("account-second", "org-second")
+            : first;
+        int clientRequests = 0;
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            time,
+            new SequencedWorkspaceReader(
+                first,
+                first,
+                current,
+                current),
+            new DelegatingCompanySeatClient((_, _, _) => Task.FromResult(
+                Interlocked.Increment(ref clientRequests) switch
+                {
+                    1 => SuccessfulBudget(25),
+                    2 => new OpenCodeCompanySeatFetchResult(
+                    OpenCodeCompanySeatFetchOutcome.RateLimited,
+                    StatusCode: HttpStatusCode.TooManyRequests,
+                        RetryAfter: TimeSpan.FromMinutes(5)),
+                    3 => SuccessfulBudget(75),
+                    _ => throw new InvalidOperationException("Unexpected client request."),
+                })));
+        StatusPoller poller = CreateCompanySeatPoller(provider, timeProvider: time);
+
+        await poller.PollOnceAsync(CancellationToken.None);
+        ProviderSnapshot rateLimited = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        ProviderSnapshot duringCooldown = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        Assert.Equal(2, clientRequests);
+        time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        ProviderSnapshot afterCooldown = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.Equal(25, Assert.Single(rateLimited.Windows).Percent);
+        if (selectionChanges)
+        {
+            Assert.Empty(duringCooldown.Windows);
+            Assert.Empty(duringCooldown.Info);
+        }
+        else
+        {
+            Assert.Equal(25, Assert.Single(duringCooldown.Windows).Percent);
+        }
+
+        Assert.Equal(75, Assert.Single(afterCooldown.Windows).Percent);
+        Assert.Equal(0, afterCooldown.ConsecutiveFailures);
+        Assert.Equal(3, clientRequests);
+    }
+
+    [Theory]
+    [InlineData("transient")]
+    [InlineData("invalid")]
+    [InlineData("exception")]
+    [InlineData("timeout")]
+    public async Task OpenCodeCompanySeatCooldownDiscoveryFailureDoesNotBypassRetryAfter(
+        string failureKind)
+    {
+        var time = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        OpenCodeConsoleActiveWorkspace workspace = Workspace("account-first", "org-first");
+        int reads = 0;
+        int clientRequests = 0;
+        var provider = new OpenCodeCompanySeatProvider(
+            new StubHttpMessageHandler(_ => throw new InvalidOperationException("HTTP was not expected.")),
+            SeverityFromPercent,
+            time,
+            new DelegatingWorkspaceReader(async cancellationToken =>
+            {
+                if (Interlocked.Increment(ref reads) != 3)
+                {
+                    return new OpenCodeConsoleActiveWorkspaceReadResult(
+                        OpenCodeConsoleActiveWorkspaceReadOutcome.Success,
+                        workspace);
+                }
+
+                if (failureKind == "exception")
+                {
+                    throw new IOException("synthetic command failure");
+                }
+
+                if (failureKind == "timeout")
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+
+                return new OpenCodeConsoleActiveWorkspaceReadResult(
+                    failureKind == "invalid"
+                        ? OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse
+                        : OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure);
+            }),
+            new DelegatingCompanySeatClient((_, _, _) => Task.FromResult(
+                Interlocked.Increment(ref clientRequests) switch
+                {
+                    1 => SuccessfulBudget(25),
+                    2 => new OpenCodeCompanySeatFetchResult(
+                        OpenCodeCompanySeatFetchOutcome.RateLimited,
+                        StatusCode: HttpStatusCode.TooManyRequests,
+                        RetryAfter: TimeSpan.FromMinutes(5)),
+                    3 => SuccessfulBudget(75),
+                    _ => throw new InvalidOperationException("Unexpected client request."),
+                })));
+        StatusPoller poller = CreateCompanySeatPoller(
+            provider,
+            TimeSpan.FromMilliseconds(50),
+            time);
+
+        await poller.PollOnceAsync(CancellationToken.None);
+        await poller.PollOnceAsync(CancellationToken.None);
+        ProviderSnapshot duringCooldown = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2))).Providers);
+
+        Assert.Empty(duringCooldown.Windows);
+        Assert.Empty(duringCooldown.Info);
+        Assert.Equal(2, clientRequests);
+
+        time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        ProviderSnapshot afterCooldown = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.Equal(75, Assert.Single(afterCooldown.Windows).Percent);
+        Assert.Equal(3, clientRequests);
+    }
+
     [Fact]
     public async Task TransientIncompleteClaudeCredentialUsesPollerRetentionBoundary()
     {
@@ -245,8 +574,39 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         () => AppSettings.Default,
         new RollingFileLog(Path.Combine(_directory.Path, $"poller-{Guid.NewGuid():N}.log")));
 
+    private StatusPoller CreateCompanySeatPoller(
+        OpenCodeCompanySeatProvider provider,
+        TimeSpan? providerTimeout = null,
+        TimeProvider? timeProvider = null)
+    {
+        AppSettings settings = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                provider.Id,
+                new ProviderSettings(true)),
+        };
+        return new StatusPoller(
+            [provider],
+            () => settings,
+            new RollingFileLog(Path.Combine(_directory.Path, $"company-seat-{Guid.NewGuid():N}.log")),
+            timeProvider,
+            providerTimeout: providerTimeout);
+    }
+
     private static Severity SeverityFromPercent(double? percent) =>
         SeverityPolicy.FromPercent(percent, 80, 95);
+
+    private static OpenCodeConsoleActiveWorkspace Workspace(string accountId, string organizationId) =>
+        new(accountId, $"access-{accountId}", organizationId, DateTimeOffset.UtcNow.AddHours(1));
+
+    private static OpenCodeCompanySeatFetchResult SuccessfulBudget(int percent) => new(
+        OpenCodeCompanySeatFetchOutcome.Success,
+        new OpenCodeCompanySeatBudget(
+            new BigInteger(1_000_000_000),
+            new BigInteger(10_000_000 * percent),
+            false,
+            DateTimeOffset.UtcNow.AddDays(20),
+            "default"));
 
     private static void AssertRetained(
         ProviderSnapshot expected,
@@ -291,5 +651,64 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         }
 
         throw new DirectoryNotFoundException("The source fixture directory was not found.");
+    }
+
+    private sealed class SequencedWorkspaceReader(params OpenCodeConsoleActiveWorkspace[] workspaces)
+        : IOpenCodeConsoleActiveWorkspaceReader
+    {
+        private int _index;
+
+        public Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(
+            CancellationToken cancellationToken) => Task.FromResult(new OpenCodeConsoleActiveWorkspaceReadResult(
+                OpenCodeConsoleActiveWorkspaceReadOutcome.Success,
+                workspaces[_index++]));
+    }
+
+    private sealed class SequencedWorkspaceResultReader(
+        params OpenCodeConsoleActiveWorkspaceReadResult[] results)
+        : IOpenCodeConsoleActiveWorkspaceReader
+    {
+        private int _index;
+
+        public Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(
+            CancellationToken cancellationToken) => Task.FromResult(results[_index++]);
+    }
+
+    private sealed class DelegatingWorkspaceReader(
+        Func<CancellationToken, Task<OpenCodeConsoleActiveWorkspaceReadResult>> read)
+        : IOpenCodeConsoleActiveWorkspaceReader
+    {
+        public Task<OpenCodeConsoleActiveWorkspaceReadResult> ReadAsync(
+            CancellationToken cancellationToken) => read(cancellationToken);
+    }
+
+    private sealed class SequencedCompanySeatClient(params OpenCodeCompanySeatFetchResult[] results)
+        : IOpenCodeCompanySeatClient
+    {
+        private int _index;
+
+        public Task<OpenCodeCompanySeatFetchResult> FetchAsync(
+            OpenCodeConsoleActiveWorkspace workspace,
+            CancellationToken cancellationToken) => Task.FromResult(results[_index++]);
+    }
+
+    private sealed class DelegatingCompanySeatClient(
+        Func<int, OpenCodeConsoleActiveWorkspace, CancellationToken, Task<OpenCodeCompanySeatFetchResult>> fetch)
+        : IOpenCodeCompanySeatClient
+    {
+        private int _index;
+
+        public Task<OpenCodeCompanySeatFetchResult> FetchAsync(
+            OpenCodeConsoleActiveWorkspace workspace,
+            CancellationToken cancellationToken) => fetch(_index++, workspace, cancellationToken);
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan amount) => _now += amount;
     }
 }

@@ -139,25 +139,11 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
             !string.IsNullOrWhiteSpace(value = element.GetString());
     }
 
-    private static async Task<byte[]?> RunQueryAsync(
+    internal static async Task<byte[]?> RunQueryAsync(
         string query,
         CancellationToken cancellationToken)
     {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "opencode",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            },
-        };
-        process.StartInfo.ArgumentList.Add("db");
-        process.StartInfo.ArgumentList.Add(query);
-        process.StartInfo.ArgumentList.Add("--format");
-        process.StartInfo.ArgumentList.Add("json");
+        using var process = new Process { StartInfo = CreateStartInfo(query) };
 
         try
         {
@@ -193,6 +179,29 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
             await ObserveCleanupAsync(process, stdout, stderr).ConfigureAwait(false);
             throw;
         }
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(string query)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        string commandInterpreter = Environment.GetEnvironmentVariable("ComSpec")
+            ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = commandInterpreter,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("opencode");
+        startInfo.ArgumentList.Add("db");
+        startInfo.ArgumentList.Add(query);
+        startInfo.ArgumentList.Add("--format");
+        startInfo.ArgumentList.Add("json");
+        return startInfo;
     }
 
     private static async Task<byte[]> ReadBoundedAsync(

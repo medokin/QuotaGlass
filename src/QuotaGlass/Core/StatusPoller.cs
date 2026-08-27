@@ -20,6 +20,7 @@ public sealed class StatusPoller : IActivityCadencePoller
     private readonly object _notificationGate = new();
     private readonly Queue<StatusReport> _notificationQueue = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _cooldowns = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ProviderRetentionScope> _retentionScopes = new(StringComparer.Ordinal);
     private readonly Channel<bool> _refreshRequests = Channel.CreateBounded<bool>(
         new BoundedChannelOptions(1)
         {
@@ -199,6 +200,7 @@ public sealed class StatusPoller : IActivityCadencePoller
     private ProviderSnapshot CreateDisabledSnapshot(IStatusProvider provider)
     {
         _cooldowns.TryRemove(provider.Id, out _);
+        _retentionScopes.TryRemove(provider.Id, out _);
         _log.Write(LogArea.Provider, LogOutcome.Disabled);
         return new ProviderSnapshot(
             provider.Id,
@@ -212,7 +214,7 @@ public sealed class StatusPoller : IActivityCadencePoller
             0);
     }
 
-    private Task<ProviderAttempt> PrepareProviderAttemptAsync(
+    private async Task<ProviderAttempt> PrepareProviderAttemptAsync(
         IStatusProvider provider,
         ProviderSnapshot? previous,
         bool enabled,
@@ -220,16 +222,102 @@ public sealed class StatusPoller : IActivityCadencePoller
     {
         if (!enabled)
         {
-            return Task.FromResult(new ProviderAttempt(provider, previous, ProviderAttemptKind.Disabled));
+            return new ProviderAttempt(provider, previous, ProviderAttemptKind.Disabled);
         }
 
         if (_cooldowns.TryGetValue(provider.Id, out DateTimeOffset cooldownUntil) &&
             cooldownUntil > _timeProvider.GetUtcNow())
         {
-            return Task.FromResult(new ProviderAttempt(provider, previous, ProviderAttemptKind.CoolingDown));
+            if (provider is IRetentionScopedStatusProvider scopedProvider)
+            {
+                ProviderAttempt? refreshFailure = await RefreshRetentionScopeAsync(
+                    provider,
+                    scopedProvider,
+                    previous,
+                    cancellationToken).ConfigureAwait(false);
+                if (refreshFailure is not null)
+                {
+                    return refreshFailure;
+                }
+
+                if (!RetentionScopeMatches(provider))
+                {
+                    return new ProviderAttempt(
+                        provider,
+                        previous,
+                        ProviderAttemptKind.Completed,
+                        new ProviderFetchResult(
+                            ProviderFetchOutcome.TransientFailure,
+                            preserveLastGoodData: false),
+                        PreserveCooldown: true);
+                }
+            }
+
+            return new ProviderAttempt(provider, previous, ProviderAttemptKind.CoolingDown);
         }
 
-        return FetchProviderAsync(provider, previous, cancellationToken);
+        return await FetchProviderAsync(provider, previous, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ProviderAttempt?> RefreshRetentionScopeAsync(
+        IStatusProvider provider,
+        IRetentionScopedStatusProvider scopedProvider,
+        ProviderSnapshot? previous,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(_providerTimeout, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+
+        try
+        {
+            ProviderRetentionScopeRefreshOutcome outcome = await scopedProvider
+                .RefreshRetentionScopeAsync(linked.Token)
+                .ConfigureAwait(false);
+            return outcome switch
+            {
+                ProviderRetentionScopeRefreshOutcome.Success => null,
+                ProviderRetentionScopeRefreshOutcome.InvalidResponse => new ProviderAttempt(
+                    provider,
+                    previous,
+                    ProviderAttemptKind.Completed,
+                    new ProviderFetchResult(
+                        ProviderFetchOutcome.InvalidResponse,
+                        preserveLastGoodData: false),
+                    PreserveCooldown: true),
+                _ => new ProviderAttempt(
+                    provider,
+                    previous,
+                    ProviderAttemptKind.Completed,
+                    new ProviderFetchResult(
+                        ProviderFetchOutcome.TransientFailure,
+                        preserveLastGoodData: false),
+                    PreserveCooldown: true),
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        {
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.TimedOut,
+                new ProviderFetchResult(ProviderFetchOutcome.TransientFailure),
+                exception,
+                PreserveCooldown: true);
+        }
+        catch (Exception exception)
+        {
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.Failed,
+                new ProviderFetchResult(ProviderFetchOutcome.TransientFailure),
+                exception,
+                PreserveCooldown: true);
+        }
     }
 
     private async Task<ProviderAttempt> FetchProviderAsync(
@@ -283,8 +371,14 @@ public sealed class StatusPoller : IActivityCadencePoller
 
         if (attempt.Kind is ProviderAttemptKind.TimedOut or ProviderAttemptKind.Failed)
         {
-            _cooldowns.TryRemove(attempt.Provider.Id, out _);
-            ProviderSnapshot retained = RetainFailure(attempt.Provider, attempt.Previous);
+            if (!attempt.PreserveCooldown)
+            {
+                _cooldowns.TryRemove(attempt.Provider.Id, out _);
+            }
+            ProviderSnapshot retained = RetainScopedFailure(
+                attempt.Provider,
+                attempt.Previous,
+                preserveLastGoodData: true);
             _log.Write(
                 LogArea.Provider,
                 attempt.Kind == ProviderAttemptKind.TimedOut ? LogOutcome.TimedOut : LogOutcome.Failed,
@@ -295,19 +389,30 @@ public sealed class StatusPoller : IActivityCadencePoller
             return retained;
         }
 
-        return ApplyResult(attempt.Provider, attempt.Previous, attempt.Result!);
+        return ApplyResult(
+            attempt.Provider,
+            attempt.Previous,
+            attempt.Result!,
+            attempt.PreserveCooldown);
     }
 
     private ProviderSnapshot ApplyResult(
         IStatusProvider provider,
         ProviderSnapshot? previous,
-        ProviderFetchResult result)
+        ProviderFetchResult result,
+        bool preserveCooldown)
     {
         ProviderSnapshot? snapshot = result.Snapshot;
         if (snapshot is not null && !string.Equals(snapshot.Id, provider.Id, StringComparison.Ordinal))
         {
-            _cooldowns.TryRemove(provider.Id, out _);
-            ProviderSnapshot retained = RetainFailure(provider, previous);
+            if (!preserveCooldown)
+            {
+                _cooldowns.TryRemove(provider.Id, out _);
+            }
+            ProviderSnapshot retained = RetainScopedFailure(
+                provider,
+                previous,
+                preserveLastGoodData: true);
             LogProviderResult(
                 provider,
                 new ProviderFetchResult(ProviderFetchOutcome.InvalidResponse, statusCode: result.StatusCode),
@@ -319,12 +424,18 @@ public sealed class StatusPoller : IActivityCadencePoller
         {
             DateTimeOffset cooldownUntil = _timeProvider.GetUtcNow() + result.RetryAfter!.Value;
             _cooldowns[provider.Id] = cooldownUntil;
-            ProviderSnapshot retained = RetainFailure(provider, previous);
+            ProviderSnapshot retained = RetainScopedFailure(
+                provider,
+                previous,
+                result.PreserveLastGoodData);
             LogProviderResult(provider, result, retained);
             return retained;
         }
 
-        _cooldowns.TryRemove(provider.Id, out _);
+        if (!preserveCooldown)
+        {
+            _cooldowns.TryRemove(provider.Id, out _);
+        }
         switch (result.Outcome)
         {
             case ProviderFetchOutcome.Success:
@@ -332,14 +443,21 @@ public sealed class StatusPoller : IActivityCadencePoller
             case ProviderFetchOutcome.NotConfigured:
             case ProviderFetchOutcome.AuthenticationRequired:
                 ProviderSnapshot published = snapshot! with { ConsecutiveFailures = 0 };
+                RecordRetentionScope(provider);
                 LogProviderResult(provider, result, published);
                 return published;
             case ProviderFetchOutcome.TransientFailure:
-                ProviderSnapshot transient = RetainFailure(provider, previous);
+                ProviderSnapshot transient = RetainScopedFailure(
+                    provider,
+                    previous,
+                    result.PreserveLastGoodData);
                 LogProviderResult(provider, result, transient);
                 return transient;
             case ProviderFetchOutcome.InvalidResponse:
-                ProviderSnapshot invalid = RetainFailure(provider, previous);
+                ProviderSnapshot invalid = RetainScopedFailure(
+                    provider,
+                    previous,
+                    result.PreserveLastGoodData);
                 LogProviderResult(provider, result, invalid);
                 return invalid;
             default:
@@ -387,6 +505,41 @@ public sealed class StatusPoller : IActivityCadencePoller
             null,
             _timeProvider.GetUtcNow(),
             1);
+
+    private ProviderSnapshot RetainScopedFailure(
+        IStatusProvider provider,
+        ProviderSnapshot? previous,
+        bool preserveLastGoodData)
+    {
+        bool canRetain = preserveLastGoodData && RetentionScopeMatches(provider);
+        if (!canRetain)
+        {
+            RecordRetentionScope(provider);
+        }
+
+        return RetainFailure(provider, canRetain ? previous : null);
+    }
+
+    private bool RetentionScopeMatches(IStatusProvider provider)
+    {
+        if (provider is not IRetentionScopedStatusProvider scopedProvider)
+        {
+            return true;
+        }
+
+        return _retentionScopes.TryGetValue(provider.Id, out ProviderRetentionScope previousScope) &&
+            previousScope.IsKnown &&
+            scopedProvider.RetentionScope.IsKnown &&
+            previousScope == scopedProvider.RetentionScope;
+    }
+
+    private void RecordRetentionScope(IStatusProvider provider)
+    {
+        if (provider is IRetentionScopedStatusProvider scopedProvider)
+        {
+            _retentionScopes[provider.Id] = scopedProvider.RetentionScope;
+        }
+    }
 
     private ProviderSnapshot RetainFailure(IStatusProvider provider, ProviderSnapshot? previous)
     {
@@ -596,5 +749,6 @@ public sealed class StatusPoller : IActivityCadencePoller
         ProviderSnapshot? Previous,
         ProviderAttemptKind Kind,
         ProviderFetchResult? Result = null,
-        Exception? Exception = null);
+        Exception? Exception = null,
+        bool PreserveCooldown = false);
 }

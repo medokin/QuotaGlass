@@ -4,8 +4,8 @@
 
 <h1 align="center">QuotaGlass</h1>
 
-QuotaGlass is a Windows tray application that shows Claude, Codex, OpenCode Go,
-and Ollama status at a glance. It displays current usage windows in a tray
+QuotaGlass is a Windows tray application that shows Claude, Codex, OpenCode,
+OpenCode Go, and Ollama status at a glance. It displays current usage windows in a tray
 popup, can keep an optional overlay above other windows, and raises
 notifications when usage crosses configured thresholds.
 
@@ -17,7 +17,7 @@ notifications when usage crosses configured thresholds.
 
 ## Features
 
-- Claude, Codex, and OpenCode Go subscription usage windows
+- Claude, Codex, OpenCode Company Seat, and OpenCode Go usage windows
 - Local Ollama version and running-model status
 - Tray status based on the most urgent provider state
 - Optional movable, always-on-top overlay
@@ -29,7 +29,7 @@ notifications when usage crosses configured thresholds.
 
 - Windows 10 version 2004 or newer on x64
 - [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Claude Code, Codex CLI, and/or OpenCode Go already authenticated for their
+- Claude Code, Codex CLI, and/or OpenCode already authenticated for their
   respective cards
 - Ollama running locally for the Ollama card
 
@@ -85,6 +85,21 @@ QuotaGlass reads the OpenCode account database through the read-only
 `opencode-go` API key always takes precedence. The only Go-enabled workspace is
 selected automatically. If several are eligible, the provider card lists the
 stable selector values accepted by `WorkspaceSelector`.
+
+OpenCode Company Seat monitoring is also disabled by default. Enable the
+separate provider to display the active member's effective monthly budget and
+spend for the workspace selected in OpenCode:
+
+```json
+"opencode-company-seat": {
+  "Enabled": true
+}
+```
+
+The Company Seat integration uses OpenCode's private Console contract. It reads
+only the active Console account and workspace, keeps identifiers and the access
+token in memory, and fails safely if the unsupported contract changes. The
+displayed values are member budget data, not organization-wide totals.
 
 Runtime logs are written to `%APPDATA%\QuotaGlass\log.txt`. Logs contain status
 categories only, not exception messages, headers, bodies, tokens, account IDs,

@@ -28,7 +28,8 @@ public sealed class ProviderRegistry : IDisposable
                 handlers[2],
                 SeverityFromPercent,
                 () => GetOpenCodeConsoleSettings(_settings())),
-            new OllamaProvider(handlers[3]),
+            new OpenCodeCompanySeatProvider(handlers[3], SeverityFromPercent),
+            new OllamaProvider(handlers[4]),
         ];
     }
 
@@ -50,7 +51,7 @@ public sealed class ProviderRegistry : IDisposable
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(paths);
 
-        SocketsHttpHandler[] handlers = Enumerable.Range(0, 4)
+        SocketsHttpHandler[] handlers = Enumerable.Range(0, 5)
             .Select(static _ => CreateHandler())
             .ToArray();
 
@@ -89,6 +90,7 @@ public sealed class ProviderRegistry : IDisposable
             DecompressionMethods.GZip |
             DecompressionMethods.Deflate |
             DecompressionMethods.Brotli,
+        AllowAutoRedirect = false,
         PooledConnectionLifetime = ConnectionLifetime,
     };
 
