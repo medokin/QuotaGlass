@@ -198,12 +198,14 @@ The following settings are prerequisites and are documented as manual setup:
 7. Enable repository release immutability before the first publication.
 
 Bot-created Release Please pull request events can produce approval-required
-runs under GitHub's current token policy. The trusted release workflow creates
-the title check, uses `workflow_dispatch` for the required build, verifies the
-exact run, and records its successful jobs as required checks. A personal
-access token is not required. A duplicate approval-required run can remain
-unapproved. A GitHub App or fine-grained token is optional only if maintainers
-later want every automatic pull request event to run unattended.
+runs under GitHub's current token policy. The normal build trigger therefore
+ignores pull requests limited to the three generated release files. The trusted
+release workflow creates the title check, uses `workflow_dispatch` for the
+required build, verifies the exact run, and records its successful jobs as
+required checks. Any pull request changing another file still receives normal
+CI. A personal access token is not required. A GitHub App or fine-grained token
+is optional only if maintainers later want every automatic pull request event
+to run unattended.
 
 ## Security and Failure Handling
 

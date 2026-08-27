@@ -165,9 +165,10 @@ commit, event, bounded jobs, and successful conclusions. GitHub omits these
 dispatched job checks from the pull request rollup, so the trusted workflow
 creates required check-run attestations on the release pull request commit and
 links each attestation to its original job. Required checks therefore run
-without a personal access token. GitHub may also show a duplicate automatic
-pull request run awaiting approval; the trusted attestations provide the
-required checks, so that duplicate does not need approval.
+without a personal access token. The normal pull request trigger ignores changes
+limited to the three Release Please generated files, preventing a duplicate
+approval-required run. Pull requests that change any other file still run the
+normal build workflow.
 
 If the trusted check bridge times out or an API call fails, rerun the failed
 `Release Please` workflow. The push path rediscovers the existing open generated
@@ -199,8 +200,8 @@ approval and require approval of the latest reviewable push.
 
 The Release Please workflow dispatches and verifies the required build jobs,
 then records their checks and the trusted title check on generated release pull
-requests. Approval-required duplicate runs caused by the automatic pull request
-event do not block merging.
+requests. The generated-file path filter prevents a duplicate automatic run
+without weakening checks on any other pull request change.
 
 ### Release immutability
 
