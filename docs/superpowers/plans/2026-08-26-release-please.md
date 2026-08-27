@@ -164,6 +164,11 @@ single open generated pull request by repository, exact branch, base, title,
 and pending-release label so a partial failure can be repaired idempotently.
 This small integration guard does not calculate a version or changelog.
 
+Ignore pull request build events only when the change is limited to the three
+Release Please generated files. The trusted dispatch and attestations provide
+the required checks for that exact case; any other file change still runs the
+normal pull request build.
+
 On recovery, check out `master`, require the input tag to equal `v` plus the
 root manifest version, require the GitHub Release to be a draft, and resolve the
 tag commit. Finish with one normalization step that exposes job outputs named
