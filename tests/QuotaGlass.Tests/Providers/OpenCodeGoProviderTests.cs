@@ -380,7 +380,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             "Console HTTP must not run when an API key is configured."));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             handler,
-            new OpenCodeConsoleSettings(null),
+            null,
             accountReader,
             consoleClient,
             credential: """
@@ -445,7 +445,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             [new UsageWindow("rolling", 42, DateTimeOffset.Parse("2026-08-27T12:00:00Z"), Severity.Normal)]);
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("API-key HTTP must not run")),
-            new OpenCodeConsoleSettings(null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             new StubConsoleClient(() => new OpenCodeConsoleFetchResult(
                 OpenCodeConsoleFetchOutcome.Success,
@@ -474,12 +474,12 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
         ProviderFetchResult unselected = await CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             client).FetchAsync(CancellationToken.None);
         ProviderFetchResult selected = await CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(second.Selector),
+            second.Selector,
             new StubAccountReader(() => [ConsoleAccount()]),
             client).FetchAsync(CancellationToken.None);
 
@@ -502,7 +502,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             "Expired Console tokens must not be sent."));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(null),
+            null,
             new StubAccountReader(() => [expired]),
             client);
 
@@ -523,7 +523,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             HttpStatusCode.NotFound));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             client);
 
@@ -555,7 +555,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
     private OpenCodeGoProvider CreateConsoleProvider(
         HttpMessageHandler handler,
-        OpenCodeConsoleSettings? settings,
+        string? workspaceSelector,
         IOpenCodeConsoleAccountReader accountReader,
         IOpenCodeConsoleGoClient consoleClient,
         string credential = "{}")
@@ -567,7 +567,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             SeverityFromPercent,
             new FixedTimeProvider(DateTimeOffset.Parse("2026-08-27T00:00:00Z")),
             OpenCodeGoProvider.OpenCredentialStream,
-            () => settings,
+            () => workspaceSelector,
             accountReader,
             consoleClient,
             File.Exists,

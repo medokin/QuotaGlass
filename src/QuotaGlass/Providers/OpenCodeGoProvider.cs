@@ -19,7 +19,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
-    private readonly Func<OpenCodeConsoleSettings?> _consoleSettings;
+    private readonly Func<string?> _workspaceSelector;
     private readonly IOpenCodeConsoleAccountReader _consoleAccountReader;
     private readonly IOpenCodeConsoleGoClient _consoleClient;
     private readonly Func<string, bool> _credentialProbe;
@@ -56,7 +56,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         string credentialPath,
         HttpMessageHandler handler,
         Func<double?, Severity> severityFromPercent,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> workspaceSelector,
         TimeProvider? timeProvider = null)
         : this(
             credentialPath,
@@ -64,7 +64,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             severityFromPercent,
             timeProvider,
             OpenCredentialStream,
-            consoleSettings,
+            workspaceSelector,
             new OpenCodeConsoleAccountReader(),
             new OpenCodeConsoleGoClient(handler, severityFromPercent, timeProvider))
     {
@@ -76,7 +76,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> workspaceSelector,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient)
         : this(
@@ -85,7 +85,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             severityFromPercent,
             timeProvider,
             openCredential,
-            consoleSettings,
+            workspaceSelector,
             consoleAccountReader,
             consoleClient,
             CredentialFilePrerequisite.Probe,
@@ -99,7 +99,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> workspaceSelector,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient,
         Func<string, bool> credentialProbe,
@@ -110,7 +110,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
-        _consoleSettings = consoleSettings;
+        _workspaceSelector = workspaceSelector;
         _consoleAccountReader = consoleAccountReader;
         _consoleClient = consoleClient;
         _credentialProbe = credentialProbe;
@@ -162,7 +162,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             return NotConfigured(fetchedAt);
         }
 
-        return await FetchConsoleAsync(_consoleSettings(), fetchedAt, cancellationToken).ConfigureAwait(false);
+        return await FetchConsoleAsync(_workspaceSelector(), fetchedAt, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ProviderFetchResult> FetchApiKeyAsync(
@@ -228,11 +228,10 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     }
 
     private async Task<ProviderFetchResult> FetchConsoleAsync(
-        OpenCodeConsoleSettings? settings,
+        string? workspaceSelector,
         DateTimeOffset fetchedAt,
         CancellationToken cancellationToken)
     {
-        string? workspaceSelector = settings?.WorkspaceSelector;
         ImmutableArray<OpenCodeConsoleAccount> discovered;
         try
         {
