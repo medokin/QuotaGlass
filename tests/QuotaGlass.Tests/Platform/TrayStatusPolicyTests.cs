@@ -33,14 +33,12 @@ public sealed class TrayStatusPolicyTests
         Assert.Equal(expected, state);
     }
 
-    [Theory]
-    [InlineData(HealthState.Unreachable)]
-    [InlineData(HealthState.Disabled)]
-    public void GetState_ReturnsGreyWhenEveryProviderIsUnavailable(HealthState health)
+    [Fact]
+    public void GetState_ReturnsGreyWhenEveryProviderIsUnreachable()
     {
         StatusReport report = Report(
-            Provider("claude", health),
-            Provider("codex", health));
+            Provider("claude", HealthState.Unreachable),
+            Provider("codex", HealthState.Unreachable));
 
         TrayState state = TrayStatusPolicy.GetState(report, 80, 95);
 

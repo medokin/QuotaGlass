@@ -11,7 +11,7 @@ public enum OverlayCorner
     Custom,
 }
 
-public sealed record OpenCodeConsoleSettings(bool Enabled, string? WorkspaceSelector);
+public sealed record OpenCodeConsoleSettings(string? WorkspaceSelector);
 
 public sealed record ProviderSettings
 {

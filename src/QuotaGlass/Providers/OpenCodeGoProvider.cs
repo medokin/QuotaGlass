@@ -127,7 +127,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         bool available = CredentialFilePrerequisite.IsPresentOrIndeterminate(
             _credentialPath,
             _credentialProbe) ||
-            (_consoleSettings()?.Enabled == true && _commandAvailable("opencode"));
+            _commandAvailable("opencode");
         return Task.FromResult(available);
     }
 
@@ -157,10 +157,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             return await FetchApiKeyAsync(apiKey, fetchedAt, cancellationToken).ConfigureAwait(false);
         }
 
-        OpenCodeConsoleSettings? consoleSettings = _consoleSettings();
-        return consoleSettings?.Enabled == true
-            ? await FetchConsoleAsync(consoleSettings, fetchedAt, cancellationToken).ConfigureAwait(false)
-            : NotConfigured(fetchedAt);
+        return await FetchConsoleAsync(_consoleSettings(), fetchedAt, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ProviderFetchResult> FetchApiKeyAsync(
@@ -226,10 +223,11 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     }
 
     private async Task<ProviderFetchResult> FetchConsoleAsync(
-        OpenCodeConsoleSettings settings,
+        OpenCodeConsoleSettings? settings,
         DateTimeOffset fetchedAt,
         CancellationToken cancellationToken)
     {
+        string? workspaceSelector = settings?.WorkspaceSelector;
         ImmutableArray<OpenCodeConsoleAccount> discovered;
         try
         {
@@ -254,7 +252,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         }
 
         OpenCodeConsoleFetchResult result = await _consoleClient
-            .FetchAsync(current, cancellationToken, settings.WorkspaceSelector)
+            .FetchAsync(current, cancellationToken, workspaceSelector)
             .ConfigureAwait(false);
         if (result.Outcome != OpenCodeConsoleFetchOutcome.Success)
         {
@@ -263,13 +261,13 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
 
         if (result.Workspaces.IsEmpty)
         {
-            return settings.WorkspaceSelector is null
+            return workspaceSelector is null
                 ? NotConfigured(fetchedAt)
                 : SelectionRequired([], fetchedAt);
         }
 
         OpenCodeConsoleWorkspace? selected;
-        if (settings.WorkspaceSelector is string selector)
+        if (workspaceSelector is string selector)
         {
             selected = result.Workspaces.FirstOrDefault(workspace =>
                 string.Equals(workspace.Selector, selector, StringComparison.Ordinal));

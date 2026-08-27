@@ -35,7 +35,8 @@ notifications when usage crosses configured thresholds.
 QuotaGlass reads only the required credential fields from files created by
 Claude Code, Codex CLI, and OpenCode. It does not write those files, refresh
 tokens, or log credentials, account identifiers, or API response bodies.
-Providers can be disabled in the local settings file.
+Providers are discovered from their local prerequisites. Providers that are not
+configured or installed remain hidden.
 
 ## Installation
 
@@ -88,40 +89,30 @@ QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The
 defaults poll once per minute while active, use 80 and 95 percent warning
 thresholds, keep the overlay hidden, and leave autostart disabled.
 
-OpenCode Console discovery is disabled by default. It can be enabled for an
-OpenCode Go account without a local API key by adding `OpenCodeConsole` to the
-existing `opencode-go` provider setting:
+When no `opencode-go` API key exists, QuotaGlass automatically discovers
+OpenCode Console through the local `opencode` command. No provider setting is
+required. If several workspaces expose Go quota, use their stable selector to
+choose one:
 
 ```json
 "opencode-go": {
-  "Enabled": true,
   "OpenCodeConsole": {
-    "Enabled": true,
-    "WorkspaceSelector": null
+    "WorkspaceSelector": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 }
 ```
 
 QuotaGlass reads the OpenCode account database through the read-only
 `opencode db` command and keeps access tokens in memory only. A configured
-`opencode-go` API key always takes precedence. The only Go-enabled workspace is
-selected automatically. If several are eligible, the provider card lists the
+`opencode-go` API key always takes precedence. A single workspace with Go quota
+is selected automatically. If several are eligible, the provider card lists the
 stable selector values accepted by `WorkspaceSelector`.
 
-OpenCode Company Seat monitoring is also disabled by default. Enable the
-separate provider to display the active member's effective monthly budget and
-spend for the workspace selected in OpenCode:
-
-```json
-"opencode-company-seat": {
-  "Enabled": true
-}
-```
-
-The Company Seat integration uses OpenCode's private Console contract. It reads
-only the active Console account and workspace, keeps identifiers and the access
-token in memory, and fails safely if the unsupported contract changes. The
-displayed values are member budget data, not organization-wide totals.
+OpenCode Company Seat monitoring is discovered automatically from the active
+Console account and workspace. It uses OpenCode's private Console contract,
+keeps identifiers and the access token in memory, and fails safely if the
+unsupported contract changes. The displayed values are member budget data, not
+organization-wide totals.
 
 Runtime logs are written to `%APPDATA%\QuotaGlass\log.txt`. Logs contain status
 categories only, not exception messages, headers, bodies, tokens, account IDs,

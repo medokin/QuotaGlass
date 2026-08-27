@@ -77,19 +77,24 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Contains("opencode-company-seat", loaded.Providers.Keys);
         Assert.Contains("ollama", loaded.Providers.Keys);
         Assert.Equal(
-            new OpenCodeConsoleSettings(true, selector),
+            new OpenCodeConsoleSettings(selector),
             loaded.Providers["opencode-go"].OpenCodeConsole);
 
         using JsonDocument saved = JsonDocument.Parse(await File.ReadAllTextAsync(_path));
+        JsonElement providers = saved.RootElement.GetProperty("Providers");
         Assert.All(
-            saved.RootElement.GetProperty("Providers").EnumerateObject(),
+            providers.EnumerateObject(),
             provider => Assert.False(provider.Value.TryGetProperty("Enabled", out _)));
+        JsonElement console = providers
+            .GetProperty("opencode-go")
+            .GetProperty("OpenCodeConsole");
+        Assert.False(console.TryGetProperty("Enabled", out _));
     }
 
     [Fact]
     public async Task SaveAsync_OpenCodeConsoleSettingsRoundTripAndNormalizeSelector()
     {
-        // Catches the opt-in or opaque selector being discarded during settings persistence.
+        // Catches the opaque selector being discarded during settings persistence.
         string uppercaseSelector = new('A', 64);
         AppSettings configured = AppSettings.Default with
         {
@@ -97,7 +102,7 @@ public sealed class SettingsStoreTests : IDisposable
                 "opencode-go",
                 new ProviderSettings()
                 {
-                    OpenCodeConsole = new OpenCodeConsoleSettings(true, uppercaseSelector),
+                    OpenCodeConsole = new OpenCodeConsoleSettings(uppercaseSelector),
                 }),
         };
 
@@ -106,7 +111,6 @@ public sealed class SettingsStoreTests : IDisposable
 
         OpenCodeConsoleSettings console = Assert.IsType<OpenCodeConsoleSettings>(
             loaded.Providers["opencode-go"].OpenCodeConsole);
-        Assert.True(console.Enabled);
         Assert.Equal(new string('a', 64), console.WorkspaceSelector);
         string persisted = await File.ReadAllTextAsync(_path);
         Assert.DoesNotContain(uppercaseSelector, persisted, StringComparison.Ordinal);
@@ -125,7 +129,7 @@ public sealed class SettingsStoreTests : IDisposable
                 "opencode-go",
                 new ProviderSettings()
                 {
-                    OpenCodeConsole = new OpenCodeConsoleSettings(true, selector),
+                    OpenCodeConsole = new OpenCodeConsoleSettings(selector),
                 }),
             OverlayVisible = true,
         };
@@ -145,7 +149,7 @@ public sealed class SettingsStoreTests : IDisposable
                 "claude",
                 new ProviderSettings()
                 {
-                    OpenCodeConsole = new OpenCodeConsoleSettings(true, null),
+                    OpenCodeConsole = new OpenCodeConsoleSettings(null),
                 }),
         };
         await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(invalid), CancellationToken.None);

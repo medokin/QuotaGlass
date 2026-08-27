@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Populate OpenCode Go quota windows from an opt-in OpenCode Console account when no local `opencode-go` API key exists.
+**Goal:** Populate OpenCode Go quota windows from an automatically discovered OpenCode Console account when no local `opencode-go` API key exists.
 
-**Architecture:** Preserve the current API-key request as the first authentication path. When it is absent and Console discovery is enabled, run the read-only `opencode db` command to select only account IDs, access tokens, expiries, and active organization state, discover organizations through the Console account API, and call the exact private `GET /console/api/go/status` meter route. Keep all credentials and raw identifiers in memory, persist only an opaque SHA-256 selector, and treat the private endpoint as a capability that may disappear.
+**Architecture:** Preserve the current API-key request as the first authentication path. When it is absent and the local `opencode` command is available, run the read-only `opencode db` command to select only account IDs, access tokens, expiries, and active organization state, discover organizations through the Console account API, and call the exact private `GET /console/api/go/status` meter route. Keep all credentials and raw identifiers in memory, persist only an opaque SHA-256 selector, and treat the private endpoint as a capability that may disappear.
 
 **Tech Stack:** .NET 10, C# 14, WPF, `System.Diagnostics.Process`, `System.Net.Http`, `System.Text.Json`, xUnit
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Keep the existing `opencode-go` API-key integration preferred and unchanged.
-- Console discovery is opt-in.
+- Console discovery follows local availability automatically.
 - Never select the OpenCode refresh-token or email columns.
 - Never persist or log access tokens, account IDs, organization IDs, emails, organization names, or raw response bodies.
 - Never refresh, write, export, or delete OpenCode credentials.
@@ -26,7 +26,7 @@
 
 ---
 
-### Task 1: Opt-in settings model
+### Task 1: Workspace selection settings model
 
 **Files:**
 - Modify: `src/QuotaGlass/Core/AppSettings.cs`
@@ -34,18 +34,18 @@
 - Test: `tests/QuotaGlass.Tests/Core/SettingsStoreTests.cs`
 
 **Interfaces:**
-- Produces: `OpenCodeConsoleSettings(bool Enabled, string? WorkspaceSelector)`
+- Produces: `OpenCodeConsoleSettings(string? WorkspaceSelector)`
 - Produces: `ProviderSettings.OpenCodeConsole`
 - Consumes: existing provider settings serialization and normalization
 
 - [ ] **Step 1: Write failing settings tests**
 
-Add tests that enable Console discovery, round-trip a 64-character lowercase hexadecimal selector, reject malformed selectors, and verify default settings keep Console discovery disabled.
+Add tests that round-trip a 64-character lowercase hexadecimal selector, reject malformed selectors, and verify default settings require no Console configuration.
 
 ```csharp
-ProviderSettings configured = new(true)
+ProviderSettings configured = new()
 {
-    OpenCodeConsole = new(true, new string('a', 64)),
+    OpenCodeConsole = new(new string('a', 64)),
 };
 ```
 
@@ -64,15 +64,15 @@ Expected: compile failure because `OpenCodeConsoleSettings` and `ProviderSetting
 Add:
 
 ```csharp
-public sealed record OpenCodeConsoleSettings(bool Enabled, string? WorkspaceSelector);
+public sealed record OpenCodeConsoleSettings(string? WorkspaceSelector);
 
-public sealed record ProviderSettings(bool Enabled)
+public sealed record ProviderSettings
 {
     public OpenCodeConsoleSettings? OpenCodeConsole { get; init; }
 }
 ```
 
-Normalize a non-null selector to lowercase and accept it only when it contains exactly 64 ASCII hexadecimal characters. Leave `OpenCodeConsole` null by default so existing files remain opt-in.
+Normalize a non-null selector to lowercase and accept it only when it contains exactly 64 ASCII hexadecimal characters. Leave `OpenCodeConsole` null by default because discovery requires no configuration.
 
 - [ ] **Step 4: Run focused tests and verify pass**
 
@@ -233,8 +233,8 @@ Cover:
 
 ```text
 API key present -> existing /zen/go/v1/usage request only
-API key absent and Console disabled -> quiet NotConfigured
-API key absent and Console enabled -> account reader and Console client run
+API key absent and local command unavailable -> quiet NotConfigured
+API key absent and local command available -> account reader and Console client run
 one eligible organization -> automatic success
 multiple eligible organizations without selector -> quiet selection-required snapshot
 multiple eligible organizations with matching selector -> selected success

@@ -32,7 +32,7 @@
 
 **Interfaces:**
 - Produces: `ProviderSettings` with `OpenCodeConsoleSettings? OpenCodeConsole { get; init; }` and no provider-level `Enabled` property.
-- Preserves: `OpenCodeConsoleSettings(bool Enabled, string? WorkspaceSelector)`.
+- Preserves: `OpenCodeConsoleSettings(string? WorkspaceSelector)`.
 
 - [ ] **Step 1: Write failing migration and default tests**
 
@@ -114,7 +114,7 @@ Implement command discovery by scanning non-empty PATH entries for the command n
 
 - [ ] **Step 4: Implement provider-specific probes**
 
-Claude and Codex use injected `Func<string, bool>` file checks. OpenCode Go returns true for an API credential file or for enabled Console fallback plus an available `opencode` command. OpenCode Company Seat checks the same local command. Ollama sends a GET to its local version URI and returns false only for connection-level `HttpRequestException`; cancellation still propagates.
+Claude and Codex use injected `Func<string, bool>` file checks. OpenCode Go returns true for an API credential file or an available local `opencode` command. OpenCode Company Seat checks the same local command. Ollama sends a GET to its local version URI and returns false only for connection-level `HttpRequestException`; cancellation still propagates.
 
 - [ ] **Step 5: Run focused provider tests**
 
