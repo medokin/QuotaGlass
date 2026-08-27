@@ -89,6 +89,47 @@ public sealed class OllamaProviderTests
     }
 
     [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"version\":null}")]
+    [InlineData("{\"version\":42}")]
+    public async Task FetchAsync_InvalidVersionShapeReturnsInvalidResponse(string versionJson)
+    {
+        // Break caught: a valid JSON document with a missing or non-string version escapes as an exception.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(versionJson, Encoding.UTF8, "application/json"),
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"models\":null}")]
+    [InlineData("{\"models\":{}}")]
+    public async Task FetchAsync_InvalidModelsShapeReturnsInvalidResponse(string processJson)
+    {
+        // Break caught: a valid process document with a missing or non-array models field is transiently reclassified.
+        var handler = new StubHttpMessageHandler(request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                request.RequestUri!.AbsolutePath.EndsWith("version", StringComparison.Ordinal)
+                    ? "{\"version\":\"0.32.15\"}"
+                    : processJson,
+                Encoding.UTF8,
+                "application/json"),
+        });
+
+        ProviderFetchResult result = await new OllamaProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.TooManyRequests, "30", 30)]
     [InlineData(HttpStatusCode.ServiceUnavailable, null, 300)]
     public async Task FetchAsync_RateLimitReturnsSafeCooldown(

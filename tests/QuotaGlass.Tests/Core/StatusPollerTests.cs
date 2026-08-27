@@ -369,6 +369,36 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task PollOnceAsync_CallerCancellationDoesNotCommitCompletedProviderCooldown()
+    {
+        // Break caught: one completed provider mutates cooldown state before another provider observes cancellation.
+        ProviderSnapshot recovered = FakeStatusProvider.Snapshot("codex", planLabel: "eligible");
+        FakeStatusProvider rateLimited = FakeStatusProvider.SequenceResults(
+            "codex",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.RateLimited,
+                    statusCode: HttpStatusCode.TooManyRequests,
+                    retryAfter: TimeSpan.FromMinutes(5))),
+                _ => Task.FromResult(new ProviderFetchResult(ProviderFetchOutcome.Success, recovered)),
+            ]);
+        FakeStatusProvider blocking = FakeStatusProvider.Blocking("ollama");
+        StatusPoller poller = CreatePoller([rateLimited, blocking]);
+        using var cancellation = new CancellationTokenSource();
+
+        Task<StatusReport> canceledPoll = poller.PollOnceAsync(cancellation.Token);
+        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledPoll);
+        blocking.CompleteOk();
+
+        ProviderSnapshot[] next = (await poller.PollOnceAsync(CancellationToken.None)).Providers.ToArray();
+
+        Assert.Equal(2, rateLimited.InvocationCount);
+        Assert.Equal("eligible", Assert.Single(next, snapshot => snapshot.Id == "codex").PlanLabel);
+    }
+
+    [Fact]
     public async Task PollOnceAsync_PropagatesCallerCancellation()
     {
         // Break caught: caller cancellation is converted into a retained provider failure.

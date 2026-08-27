@@ -47,6 +47,11 @@ public sealed record ProviderFetchResult
             {
                 throw new ArgumentException("A rate-limited result requires a positive retry delay.", nameof(retryAfter));
             }
+
+            if (retryAfter > TimeSpan.FromHours(1))
+            {
+                throw new ArgumentOutOfRangeException(nameof(retryAfter), "A retry delay cannot exceed one hour.");
+            }
         }
         else if (retryAfter is not null)
         {

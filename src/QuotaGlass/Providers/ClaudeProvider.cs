@@ -136,7 +136,8 @@ public sealed class ClaudeProvider : IStatusProvider
                     windows,
                     info,
                     "re-auth: run claude login",
-                    fetchedAt));
+                    fetchedAt),
+                profile.StatusCode);
         }
 
         if (profile.Error is not null)
@@ -149,7 +150,8 @@ public sealed class ClaudeProvider : IStatusProvider
                     windows,
                     info,
                     profile.Error,
-                    fetchedAt));
+                    fetchedAt),
+                profile.StatusCode);
         }
 
         return new ProviderFetchResult(
@@ -160,7 +162,8 @@ public sealed class ClaudeProvider : IStatusProvider
                 windows,
                 info,
                 null,
-                fetchedAt));
+                fetchedAt),
+            usageResponse.StatusCode);
         }
     }
 
@@ -178,7 +181,7 @@ public sealed class ClaudeProvider : IStatusProvider
     {
         if (_profileCachedAt.AddHours(1) > now)
         {
-            return new ProfileResult(_cachedPlanLabel, false, null);
+            return new ProfileResult(_cachedPlanLabel, false, null, null);
         }
 
         try
@@ -187,34 +190,50 @@ public sealed class ClaudeProvider : IStatusProvider
                 .ConfigureAwait(false);
             if (IsAuthExpired(response.StatusCode))
             {
-                return new ProfileResult(_cachedPlanLabel, true, null);
+                return new ProfileResult(_cachedPlanLabel, true, null, response.StatusCode);
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed");
+                return new ProfileResult(
+                    _cachedPlanLabel,
+                    false,
+                    "Claude profile request failed",
+                    response.StatusCode);
             }
 
-            using JsonDocument profile = await ProviderHttpSafety
-                .ReadJsonAsync(response, cancellationToken)
-                .ConfigureAwait(false);
+            JsonDocument profile;
+            try
+            {
+                profile = await ProviderHttpSafety
+                    .ReadJsonAsync(response, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidDataException)
+            {
+                return new ProfileResult(
+                    _cachedPlanLabel,
+                    false,
+                    "Claude profile response was not JSON",
+                    response.StatusCode);
+            }
+
+            using (profile)
+            {
             _cachedPlanLabel = TryGetObject(profile.RootElement, "organization") is JsonElement organization
                 ? TryGetString(organization, "seat_tier")
                 : null;
             _profileCachedAt = now;
-            return new ProfileResult(_cachedPlanLabel, false, null);
+            return new ProfileResult(_cachedPlanLabel, false, null, response.StatusCode);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (InvalidDataException)
-        {
-            return new ProfileResult(_cachedPlanLabel, false, "Claude profile response was not JSON");
-        }
         catch (Exception)
         {
-            return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed");
+            return new ProfileResult(_cachedPlanLabel, false, "Claude profile request failed", null);
         }
     }
 
@@ -355,7 +374,11 @@ public sealed class ClaudeProvider : IStatusProvider
 
     private sealed record Credential(string AccessToken, DateTimeOffset ExpiresAt);
 
-    private sealed record ProfileResult(string? PlanLabel, bool AuthExpired, string? Error);
+    private sealed record ProfileResult(
+        string? PlanLabel,
+        bool AuthExpired,
+        string? Error,
+        HttpStatusCode? StatusCode);
 
     private sealed class CredentialScanner(Stream stream)
     {

@@ -276,8 +276,11 @@ public sealed class ClaudeProviderTests : IDisposable
         // Catches a provider that reports an expired or rejected token as a generic transport failure.
         var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(statusCode));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(statusCode, result.StatusCode);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
     }
@@ -316,8 +319,11 @@ public sealed class ClaudeProviderTests : IDisposable
                 ? JsonResponse(ReadFixture("claude-usage.json"))
                 : new HttpResponseMessage(HttpStatusCode.Unauthorized));
 
-        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(HttpStatusCode.Unauthorized, result.StatusCode);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         AssertUsageAndSpendPreserved(snapshot);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
@@ -368,6 +374,7 @@ public sealed class ClaudeProviderTests : IDisposable
         ProviderSnapshot degraded = Assert.IsType<ProviderSnapshot>(result.Snapshot);
 
         Assert.Equal(ProviderFetchOutcome.PartialSuccess, result.Outcome);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result.StatusCode);
         Assert.Equal(HealthState.Ok, first.Health);
         Assert.Equal(HealthState.Degraded, degraded.Health);
         Assert.Equal("team_standard", degraded.PlanLabel);

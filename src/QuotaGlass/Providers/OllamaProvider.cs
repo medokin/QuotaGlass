@@ -50,6 +50,17 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
                 .ReadJsonAsync(processResponse, cancellationToken)
                 .ConfigureAwait(false);
 
+            if (!version.RootElement.TryGetProperty("version", out JsonElement versionValue) ||
+                versionValue.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(versionValue.GetString()) ||
+                !processes.RootElement.TryGetProperty("models", out JsonElement models) ||
+                models.ValueKind != JsonValueKind.Array)
+            {
+                return new ProviderFetchResult(
+                    ProviderFetchOutcome.InvalidResponse,
+                    statusCode: HttpStatusCode.OK);
+            }
+
             return new ProviderFetchResult(
                 ProviderFetchOutcome.Success,
                 new ProviderSnapshot(
@@ -59,8 +70,8 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
                     null,
                     ImmutableArray<UsageWindow>.Empty,
                     [
-                        new InfoLine("Version", version.RootElement.GetProperty("version").GetString()!),
-                        new InfoLine("Loaded models", processes.RootElement.GetProperty("models").GetArrayLength().ToString())
+                        new InfoLine("Version", versionValue.GetString()!),
+                        new InfoLine("Loaded models", models.GetArrayLength().ToString())
                     ],
                     null,
                     fetchedAt,

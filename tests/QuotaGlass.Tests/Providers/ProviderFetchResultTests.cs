@@ -42,4 +42,14 @@ public sealed class ProviderFetchResultTests
             ProviderFetchOutcome.TransientFailure,
             retryAfter: TimeSpan.FromMinutes(5)));
     }
+
+    [Fact]
+    public void Constructor_RateLimitedRejectsCooldownAboveOneHour()
+    {
+        // Break caught: an out-of-contract cooldown later fails diagnostics and aborts the poll transition.
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProviderFetchResult(
+            ProviderFetchOutcome.RateLimited,
+            statusCode: HttpStatusCode.TooManyRequests,
+            retryAfter: TimeSpan.FromHours(2)));
+    }
 }
