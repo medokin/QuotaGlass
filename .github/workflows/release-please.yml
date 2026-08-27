@@ -369,7 +369,6 @@ jobs:
           )
           dotnet publish src/QuotaGlass/QuotaGlass.csproj `
               -c Release `
-              --no-restore `
               -p:PublishProfile=win-x64 `
               -o artifacts/QuotaGlass-win-x64 `
               @versionProperties
