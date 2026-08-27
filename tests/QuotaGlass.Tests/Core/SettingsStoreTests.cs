@@ -30,7 +30,58 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(95, settings.CriticalPercent);
         Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
         Assert.True(settings.Providers["opencode-go"].Enabled);
+        Assert.Null(settings.Providers["opencode-go"].OpenCodeConsole);
         Assert.All(settings.Providers.Values, provider => Assert.True(provider.Enabled));
+    }
+
+    [Fact]
+    public async Task SaveAsync_OpenCodeConsoleSettingsRoundTripAndNormalizeSelector()
+    {
+        // Catches the opt-in or opaque selector being discarded during settings persistence.
+        string uppercaseSelector = new('A', 64);
+        AppSettings configured = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                "opencode-go",
+                new ProviderSettings(true)
+                {
+                    OpenCodeConsole = new OpenCodeConsoleSettings(true, uppercaseSelector),
+                }),
+        };
+
+        await _store.SaveAsync(configured, CancellationToken.None);
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        OpenCodeConsoleSettings console = Assert.IsType<OpenCodeConsoleSettings>(
+            loaded.Providers["opencode-go"].OpenCodeConsole);
+        Assert.True(console.Enabled);
+        Assert.Equal(new string('a', 64), console.WorkspaceSelector);
+        string persisted = await File.ReadAllTextAsync(_path);
+        Assert.DoesNotContain(uppercaseSelector, persisted, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("abc")]
+    [InlineData("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")]
+    public async Task LoadAsync_InvalidOpenCodeWorkspaceSelectorReturnsDefaults(string selector)
+    {
+        // Catches malformed selectors creating an ambiguous or unstable workspace choice.
+        AppSettings invalid = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.SetItem(
+                "opencode-go",
+                new ProviderSettings(true)
+                {
+                    OpenCodeConsole = new OpenCodeConsoleSettings(true, selector),
+                }),
+            OverlayVisible = true,
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(invalid), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        Assert.Equal(AppSettings.Default, loaded);
     }
 
     [Fact]

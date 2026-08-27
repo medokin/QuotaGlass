@@ -313,12 +313,52 @@ public sealed class SettingsStore : IDisposable
         }
 
         var providers = settings.Providers.ToBuilder();
+        foreach ((string providerId, ProviderSettings provider) in settings.Providers)
+        {
+            OpenCodeConsoleSettings? console = provider.OpenCodeConsole;
+            if (console?.WorkspaceSelector is not string selector)
+            {
+                continue;
+            }
+
+            if (!IsWorkspaceSelector(selector))
+            {
+                return false;
+            }
+
+            providers[providerId] = provider with
+            {
+                OpenCodeConsole = console with
+                {
+                    WorkspaceSelector = selector.ToLowerInvariant(),
+                },
+            };
+        }
+
         foreach ((string providerId, ProviderSettings provider) in AppSettings.Default.Providers)
         {
             providers.TryAdd(providerId, provider);
         }
 
         normalized = settings with { Providers = providers.ToImmutable() };
+        return true;
+    }
+
+    private static bool IsWorkspaceSelector(string selector)
+    {
+        if (selector.Length != 64)
+        {
+            return false;
+        }
+
+        foreach (char character in selector)
+        {
+            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f') and not (>= 'A' and <= 'F'))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
