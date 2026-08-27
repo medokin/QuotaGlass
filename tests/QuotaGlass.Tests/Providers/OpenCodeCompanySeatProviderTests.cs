@@ -41,8 +41,8 @@ public sealed class OpenCodeCompanySeatProviderTests
         Assert.Equal(Severity.Normal, window.Severity);
         Assert.Collection(
             snapshot.Info,
-            line => Assert.Equal(new InfoLine("Spend", "USD 2.50"), line),
-            line => Assert.Equal(new InfoLine("Budget", "USD 10.00"), line));
+            line => Assert.Equal(new InfoLine("Spend", "USD 25.00"), line),
+            line => Assert.Equal(new InfoLine("Budget", "USD 100.00"), line));
         Assert.DoesNotContain("organization", snapshot.Label, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("organization", snapshot.PlanLabel, StringComparison.OrdinalIgnoreCase);
     }
@@ -111,7 +111,7 @@ public sealed class OpenCodeCompanySeatProviderTests
         UsageWindow window = Assert.Single(snapshot.Windows);
         Assert.Null(window.Percent);
         Assert.Equal(expectedSeverity, window.Severity);
-        Assert.Contains(new InfoLine("Spend", "USD 0.50"), snapshot.Info);
+        Assert.Contains(new InfoLine("Spend", "USD 5.00"), snapshot.Info);
         Assert.Contains(new InfoLine("Budget", "USD 0.00"), snapshot.Info);
     }
 
@@ -147,7 +147,7 @@ public sealed class OpenCodeCompanySeatProviderTests
         Assert.Equal(ProviderFetchOutcome.PartialSuccess, result.Outcome);
         ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
         Assert.Null(Assert.Single(snapshot.Windows).Percent);
-        Assert.Contains(new InfoLine("Spend", "USD 1.25"), snapshot.Info);
+        Assert.Contains(new InfoLine("Spend", "USD 12.50"), snapshot.Info);
         Assert.Contains(new InfoLine("Budget", "Not configured"), snapshot.Info);
     }
 
