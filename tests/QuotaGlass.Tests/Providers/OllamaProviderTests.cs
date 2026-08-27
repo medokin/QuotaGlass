@@ -92,6 +92,10 @@ public sealed class OllamaProviderTests
     [InlineData("{}")]
     [InlineData("{\"version\":null}")]
     [InlineData("{\"version\":42}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"text\"")]
     public async Task FetchAsync_InvalidVersionShapeReturnsInvalidResponse(string versionJson)
     {
         // Break caught: a valid JSON document with a missing or non-string version escapes as an exception.
@@ -110,6 +114,10 @@ public sealed class OllamaProviderTests
     [InlineData("{}")]
     [InlineData("{\"models\":null}")]
     [InlineData("{\"models\":{}}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"text\"")]
     public async Task FetchAsync_InvalidModelsShapeReturnsInvalidResponse(string processJson)
     {
         // Break caught: a valid process document with a missing or non-array models field is transiently reclassified.

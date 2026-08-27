@@ -37,6 +37,15 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
             using JsonDocument version = await ProviderHttpSafety
                 .ReadJsonAsync(versionResponse, cancellationToken)
                 .ConfigureAwait(false);
+            if (version.RootElement.ValueKind != JsonValueKind.Object ||
+                !version.RootElement.TryGetProperty("version", out JsonElement versionValue) ||
+                versionValue.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(versionValue.GetString()))
+            {
+                return new ProviderFetchResult(
+                    ProviderFetchOutcome.InvalidResponse,
+                    statusCode: versionResponse.StatusCode);
+            }
 
             using HttpResponseMessage processResponse = await SendAsync(client, ProcessUri, cancellationToken)
                 .ConfigureAwait(false);
@@ -50,15 +59,13 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
                 .ReadJsonAsync(processResponse, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (!version.RootElement.TryGetProperty("version", out JsonElement versionValue) ||
-                versionValue.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(versionValue.GetString()) ||
+            if (processes.RootElement.ValueKind != JsonValueKind.Object ||
                 !processes.RootElement.TryGetProperty("models", out JsonElement models) ||
                 models.ValueKind != JsonValueKind.Array)
             {
                 return new ProviderFetchResult(
                     ProviderFetchOutcome.InvalidResponse,
-                    statusCode: HttpStatusCode.OK);
+                    statusCode: processResponse.StatusCode);
             }
 
             return new ProviderFetchResult(
