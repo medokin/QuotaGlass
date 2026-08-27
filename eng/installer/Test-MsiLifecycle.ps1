@@ -14,9 +14,7 @@ param(
 
     [Parameter(Mandatory)]
     [ValidatePattern('^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$')]
-    [string] $UpgradeVersion,
-
-    [switch] $AllowRunCleanupIsolation
+    [string] $UpgradeVersion
 )
 
 Set-StrictMode -Version Latest
@@ -373,22 +371,7 @@ try {
             $runKey.Dispose()
         }
 
-        $uninstallLogPath = Join-Path $logDirectory 'uninstall.log'
-        $expectedRemoval = 'RegRemoveValue(Name=QuotaGlass,Value="' + $installedExecutable + '",)'
-        $loggedRemoval = Select-String `
-            -LiteralPath $uninstallLogPath `
-            -Pattern $expectedRemoval `
-            -SimpleMatch `
-            -Quiet
-        if (-not $AllowRunCleanupIsolation -or -not $loggedRemoval) {
-            throw "QuotaGlass Run value remains after uninstall: '$remainingRunValue'."
-        }
-
-        Write-Warning (
-            'The current Windows automation context isolated MSI registry writes from the ' +
-            'interactive HKCU view. The MSI log proves the exact Run value removal was executed; ' +
-            'strict CI verification remains enabled.'
-        )
+        throw "QuotaGlass Run value remains after uninstall: '$remainingRunValue'."
     }
 
     $completed = $true
