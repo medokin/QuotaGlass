@@ -157,6 +157,11 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             return await FetchApiKeyAsync(apiKey, fetchedAt, cancellationToken).ConfigureAwait(false);
         }
 
+        if (!_commandAvailable("opencode"))
+        {
+            return NotConfigured(fetchedAt);
+        }
+
         return await FetchConsoleAsync(_consoleSettings(), fetchedAt, cancellationToken).ConfigureAwait(false);
     }
 

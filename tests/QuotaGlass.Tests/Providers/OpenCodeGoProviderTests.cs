@@ -415,6 +415,29 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_NoApiKeyAndConsoleCommandUnavailable_ReturnsNotConfigured()
+    {
+        // Catches direct fetches invoking Console account discovery without its local prerequisite.
+        string credentialPath = _directory.WriteFile("opencode-no-console-auth.json", "{}");
+        var provider = new OpenCodeGoProvider(
+            credentialPath,
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            null,
+            OpenCodeGoProvider.OpenCredentialStream,
+            () => null,
+            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            _ => false,
+            _ => false);
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
+    }
+
+    [Fact]
     public async Task FetchAsync_ConsoleWithOneEligibleWorkspacePublishesUsage()
     {
         var workspace = new OpenCodeConsoleWorkspace(
@@ -546,7 +569,9 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             OpenCodeGoProvider.OpenCredentialStream,
             () => settings,
             accountReader,
-            consoleClient);
+            consoleClient,
+            File.Exists,
+            command => command == "opencode");
     }
 
     private static OpenCodeConsoleAccount ConsoleAccount() => new(
