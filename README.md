@@ -28,7 +28,6 @@ notifications when usage crosses configured thresholds.
 ## Requirements
 
 - Windows 10 version 2004 or newer on x64
-- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Claude Code, Codex CLI, and/or OpenCode already authenticated for their
   respective cards
 - Ollama running locally for the Ollama card
@@ -37,6 +36,29 @@ QuotaGlass reads only the required credential fields from files created by
 Claude Code, Codex CLI, and OpenCode. It does not write those files, refresh
 tokens, or log credentials, account identifiers, or API response bodies.
 Providers can be disabled in the local settings file.
+
+## Installation
+
+Download the versioned `.msi` from the GitHub Release and run it. The installer
+contains the required .NET runtime, installs for the current user without
+elevation under `%LOCALAPPDATA%\Programs\QuotaGlass`, and creates a Start Menu
+shortcut. It does not create a desktop shortcut or enable Start with Windows.
+Windows may show an unknown-publisher warning because the package is not signed.
+
+QuotaGlass appears in Windows Apps & Features after installation. Uninstalling
+removes the application and shortcut while preserving settings and logs under
+`%APPDATA%\QuotaGlass`.
+
+The release ZIP is the portable alternative. Its `QuotaGlass.exe` requires the
+[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
+Verify either download with its adjacent SHA-256 checksum file.
+
+For unattended install or removal, use Windows Installer from PowerShell:
+
+```powershell
+msiexec.exe /i .\QuotaGlass-vX.Y.Z-win-x64.msi /qn /norestart
+msiexec.exe /x .\QuotaGlass-vX.Y.Z-win-x64.msi /qn /norestart
+```
 
 ## Build
 

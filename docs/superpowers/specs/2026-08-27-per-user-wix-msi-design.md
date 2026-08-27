@@ -83,18 +83,18 @@ installer-owned directories are removed when the component is removed.
 
 ## Running Application and Upgrade Behavior
 
-Windows Installer 5.0 Restart Manager integration handles the installed
-`QuotaGlass.exe` when it is in use. Silent installs and upgrades use the
-standard Restart Manager path to close file holders without a reboot. Basic or
-interactive installation uses standard Windows Installer files-in-use handling.
-QuotaGlass is not automatically relaunched because the application does not
-register for Restart Manager restart.
+Windows Installer 5.0 Restart Manager detects the installed `QuotaGlass.exe`
+when it is in use, but local lifecycle verification showed that it classifies
+the WPF tray process as critical and schedules a reboot during a silent major
+upgrade. The package therefore uses an immediate, impersonated WiX utility
+action to invoke the system `taskkill.exe` for `QuotaGlass.exe` when an MSI
+version is already installed or an upgrade is detected. An already-absent
+process is accepted and the package does not request a reboot.
 
-No application-closing custom action is added. Local lifecycle verification
-must prove that a silent major upgrade succeeds with the installed QuotaGlass
-process running and returns a non-reboot success code. If this standard mechanism
-does not pass on the supported Windows environment, the design must be revised
-before adding a process-closing custom action.
+The action does not run on a clean first install. It is limited to
+`QuotaGlass.exe` and exists only because the standard Restart Manager path did
+not satisfy the required no-reboot running-upgrade behavior on the supported
+Windows environment. QuotaGlass is not automatically relaunched.
 
 ## Autostart Cleanup
 
@@ -104,16 +104,19 @@ An uninstall must remove the current-user value:
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\QuotaGlass
 ```
 
-Windows Installer cannot remove one unowned registry value only when a component
-is uninstalled. The MSI therefore includes one narrowly scoped WiX utility
-custom action. On a complete uninstall that is not the removal phase of a major
-upgrade, it invokes the Windows `reg.exe` command in the installing user's
-context to delete only that value. An absent value is accepted. The action does
-not run during install, repair, or major upgrade removal, and it does not delete
-the shared Run key.
+An authored Windows Installer registry row cannot remove an unowned value only
+when a component is uninstalled. The MSI therefore includes one narrowly scoped
+immediate DTF custom action. On a complete uninstall that is not the removal
+phase of a major upgrade, it inserts a temporary Registry table row for that
+exact value before the standard `RemoveRegistryValues` action. Windows Installer
+then performs the removal transactionally. An absent value is accepted. The
+action does not run during install, repair, or major upgrade removal, and it
+does not delete the shared Run key.
 
-This is the only custom action. It is justified by a required behavior that the
-standard Windows Installer registry tables cannot express.
+The process-stop and registry-row actions are limited to the two required
+behaviors that the authored package tables did not satisfy: deterministic
+no-reboot process handling and deletion of one unowned registry value on true
+uninstall.
 
 ## Installer Verification Tools
 
@@ -145,8 +148,8 @@ normal solution build, tests, and portable publish:
 1. Restore the standalone WiX project.
 2. Publish the self-contained MSI payload.
 3. Verify the payload contains only `QuotaGlass.exe`.
-4. Build and inspect installer versions `0.0.1` and `0.0.2` from the same
-   payload.
+4. Publish separately version-stamped `0.0.1` and `0.0.2` payloads, then build
+   and inspect the matching installer versions.
 5. Run the silent lifecycle test from `0.0.1` to `0.0.2` with QuotaGlass
    running.
 6. Upload the `0.0.2` MSI with the existing build artifact.
@@ -228,6 +231,8 @@ will consume the immutable versioned MSI URL and checksum.
 - Existing GitHub Actions remain pinned to full commit SHAs.
 - The MSI contains only the self-contained QuotaGlass executable and installer
   metadata.
+- The process action targets only `QuotaGlass.exe`, runs only for an installed
+  version or detected upgrade, and requests no reboot.
 - The uninstall custom action touches only one named HKCU value and ignores an
   already-absent value.
 - Lifecycle tests restore any pre-existing Run value and preserve all existing

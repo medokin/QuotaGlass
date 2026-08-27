@@ -4,7 +4,7 @@
 
 **Goal:** Add a self-contained per-user Windows x64 MSI, exercise its full lifecycle, and publish it beside the existing portable ZIP through the Release Please workflow.
 
-**Architecture:** A standalone WiX 7 project consumes a separate self-contained single-file publish. PowerShell verification tools inspect the resulting MSI and exercise clean install, running-process major upgrade, and uninstall. Existing Windows CI builds both installer test versions, while Release Please builds the versioned MSI and finalizes an exact four-asset release.
+**Architecture:** A standalone WiX 5 project consumes a separate self-contained single-file publish. PowerShell verification tools inspect the resulting MSI and exercise clean install, running-process major upgrade, and uninstall. Existing Windows CI builds both installer test versions, while Release Please builds the versioned MSI and finalizes an exact four-asset release.
 
 **Tech Stack:** .NET 10, C# 14, WPF, WiX Toolset SDK 5.0.2, WixToolset.Util.wixext 5.0.2, PowerShell 7, Windows Installer 5.0, GitHub Actions
 
@@ -20,7 +20,7 @@
 - Install per-user under `%LOCALAPPDATA%\Programs\QuotaGlass` without elevation.
 - Keep `%APPDATA%\QuotaGlass` settings and logs through install, upgrade, and uninstall.
 - Do not create a desktop shortcut or enable Start with Windows during install.
-- Use standard Restart Manager handling for a running application. Add no application-closing custom action unless lifecycle verification proves it necessary.
+- Use an immediate, impersonated WiX utility action to stop `QuotaGlass.exe` only because lifecycle verification proved that standard Restart Manager classifies the running WPF tray process as critical and schedules a reboot.
 - The only planned custom action removes the single current-user `QuotaGlass` Run value on a true uninstall because Windows Installer cannot express that operation in standard registry tables.
 - Do not sign the executable or MSI.
 - Release Please output is the only release version source.
@@ -104,14 +104,17 @@ and no Run registry value. Use one installer-owned value under
 empty-directory cleanup rows required for a per-user component. Suppress only
 ICE91 because the package is already fixed to per-user scope.
 
-Author a WiX utility immediate action that executes:
+Author an immediate DTF custom action that inserts a temporary Registry table
+row for the exact current-user `QuotaGlass` Run value. Sequence it before the
+standard `RemoveRegistryValues` action with condition
+`REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`. Use current-user impersonation and
+accept an already-absent value.
 
-```text
-"[SystemFolder]reg.exe" delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "QuotaGlass" /f
-```
-
-Use `Return="ignore"`, current-user impersonation, and sequence condition
-`REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`.
+Author an immediate, impersonated WiX utility action that invokes the system
+`taskkill.exe` for `QuotaGlass.exe` with condition
+`Installed OR WIX_UPGRADE_DETECTED`. Ignore an already-absent process and disable
+Restart Manager reboot handling. This action is justified by the recorded
+standard Restart Manager failure and must not run on a clean first install.
 
 - [ ] **Step 5: Restore and build two MSIs**
 
@@ -121,16 +124,29 @@ Run:
 dotnet restore src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj
 dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release `
     -p:PublishProfile=win-x64-self-contained `
-    -o artifacts/QuotaGlass-msi-payload
+    -p:Version=0.0.1 `
+    -p:AssemblyVersion=0.0.0.0 `
+    -p:FileVersion=0.0.1.0 `
+    -p:InformationalVersion=0.0.1 `
+    -p:IncludeSourceRevisionInInformationalVersion=false `
+    -o artifacts/QuotaGlass-msi-payload-0.0.1
+dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release `
+    -p:PublishProfile=win-x64-self-contained `
+    -p:Version=0.0.2 `
+    -p:AssemblyVersion=0.0.0.0 `
+    -p:FileVersion=0.0.2.0 `
+    -p:InformationalVersion=0.0.2 `
+    -p:IncludeSourceRevisionInInformationalVersion=false `
+    -o artifacts/QuotaGlass-msi-payload-0.0.2
 dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj -c Release `
     --no-restore `
     -p:MsiVersion=0.0.1 `
-    -p:PayloadDir="$PWD\artifacts\QuotaGlass-msi-payload" `
+    -p:PayloadDir="$PWD\artifacts\QuotaGlass-msi-payload-0.0.1" `
     -p:OutputPath="$PWD\artifacts\msi-0.0.1"
 dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj -c Release `
     --no-restore `
     -p:MsiVersion=0.0.2 `
-    -p:PayloadDir="$PWD\artifacts\QuotaGlass-msi-payload" `
+    -p:PayloadDir="$PWD\artifacts\QuotaGlass-msi-payload-0.0.2" `
     -p:OutputPath="$PWD\artifacts\msi-0.0.2"
 ```
 
@@ -202,7 +218,8 @@ The script must:
 4. Verify the installed executable, current-user Start Menu shortcut, install
    directory, and HKCU Apps & Features entry.
 5. Start the installed executable and verify that exact path has a live process.
-6. Silently install the upgrade MSI and verify the old ProductCode is gone, the
+6. Silently install the upgrade MSI, reject reboot scheduling in its verbose
+   log, and verify the old ProductCode is gone, the
    new ProductCode is registered, the file version changed, and no reboot code
    was returned.
 7. Set the Run value to a harmless test command, silently uninstall the upgrade
@@ -250,9 +267,10 @@ lifecycle`. Expected: FAIL because the steps are absent.
 - [ ] **Step 2: Add MSI build and test steps**
 
 Keep the existing solution steps and portable publish unchanged. Restore the
-WiX project, publish the self-contained payload, assert its one-file inventory,
-build `0.0.1` and `0.0.2` into separate directories, run metadata verification
-on both, compare product and upgrade identities, and run the lifecycle script.
+WiX project, publish separately version-stamped self-contained `0.0.1` and
+`0.0.2` payloads, assert both one-file inventories, build matching MSIs into
+separate directories, run metadata verification on both, compare product and
+upgrade identities, and run the lifecycle script.
 Add the `0.0.2` MSI to the existing upload artifact path list.
 
 - [ ] **Step 3: Validate the workflow**
