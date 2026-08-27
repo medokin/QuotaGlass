@@ -7,6 +7,25 @@ namespace QuotaGlass.Tests.Providers;
 public sealed class OpenCodeConsoleAccountReaderTests
 {
     [Fact]
+    public void CreateStartInfo_UsesTheWindowsCommandShimWithFixedArgumentOrder()
+    {
+        // Catches CreateProcess failing to resolve Volta's extensionless and .cmd OpenCode shims.
+        const string query = "select 1 as ok;";
+
+        System.Diagnostics.ProcessStartInfo startInfo =
+            OpenCodeConsoleAccountReader.CreateStartInfo(query);
+
+        Assert.EndsWith("cmd.exe", startInfo.FileName, StringComparison.OrdinalIgnoreCase);
+        Assert.False(startInfo.UseShellExecute);
+        Assert.True(startInfo.RedirectStandardOutput);
+        Assert.True(startInfo.RedirectStandardError);
+        Assert.True(startInfo.CreateNoWindow);
+        Assert.Equal(
+            ["/d", "/c", "opencode.cmd", "db", query, "--format", "json"],
+            startInfo.ArgumentList);
+    }
+
+    [Fact]
     public async Task ReadAsync_SelectsOnlyRequiredFieldsAndMapsAccounts()
     {
         // Catches credential discovery selecting unrelated identity or refresh-token data.
