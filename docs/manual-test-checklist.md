@@ -42,6 +42,12 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | AUTOSTART-01 | Enabling Start with Windows adds only the `QuotaGlass` value with the quoted executable path. | PASS | Production `AutostartService` added an exact quoted `REG_SZ`; all other Run value names were unchanged. | The prior value was absent and was snapshotted before the check. |
 | AUTOSTART-02 | An external change to the `QuotaGlass` Run value is reflected by the menu state. | NOT EXERCISED | Production `AutostartService.IsEnabled` immediately reflected an external value change and correction; the blocked desktop prevented opening the menu. | Backend live-read behavior passed; actual menu rendering remains unverified. |
 | AUTOSTART-03 | Disabling Start with Windows removes only the `QuotaGlass` value. | PASS | Production `AutostartService` removed the named value; all other Run value names were unchanged; the prior absent state was restored. | No unrelated registry value was modified. |
+| INSTALL-01 | Interactive MSI install completes without an elevation prompt and installs under `%LOCALAPPDATA%\Programs\QuotaGlass`. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies the per-user path and Apps & Features registration. |
+| INSTALL-02 | Silent install with `msiexec /i <msi> /qn /norestart` succeeds without scheduling a reboot. | NOT EXERCISED | Not part of the recorded release candidate. | Covered by `eng/installer/Test-MsiLifecycle.ps1` for installer changes. |
+| INSTALL-03 | Installation creates one Start Menu shortcut and no desktop shortcut or autostart value. | NOT EXERCISED | Not part of the recorded release candidate. | MSI metadata verification rejects desktop shortcuts and authored Run values. |
+| INSTALL-04 | Installing the newer MSI while QuotaGlass is running upgrades in place without a reboot. | NOT EXERCISED | Not part of the recorded release candidate. | Covered by the two-version automated lifecycle. |
+| INSTALL-05 | Interactive and silent uninstall remove the app, shortcut, Apps & Features entry, and stale `QuotaGlass` Run value. | NOT EXERCISED | Not part of the recorded release candidate. | Confirm both Windows Settings and `msiexec /x <product-code> /qn /norestart`. |
+| INSTALL-06 | Uninstall preserves `%APPDATA%\QuotaGlass`, including existing settings and logs. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies a sentinel survives uninstall. |
 | POLL-01 | Refresh now starts a new poll without waiting for the normal timer. | NOT EXERCISED | Tray command was inaccessible. `StatusPollerTests.RequestRefresh_WakesRunLoopBeforeTimerTick` and `RequestRefresh_PerformsOnePoll` passed. | No runtime timing evidence was available. |
 | POLL-02 | Normal polling cadence is 60 seconds. | NOT EXERCISED | The real app run could not be observed for a complete cadence. `StatusPollerTests.SetReducedCadence_RecreatesTimerUsingCurrentSettings` passed with documented defaults. | Automated timer coverage is not a wall-clock shell observation. |
 | POLL-03 | Session lock changes polling cadence to the five-minute backoff. | NOT EXERCISED | Locking the automation-controlled workstation was prohibited because it would sever control. `ActivityStateMonitorTests.IsReducedCadence_IsTrueWhileSessionIsLocked` passed. | No workstation lock was attempted. |
@@ -71,6 +77,8 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | Fixture security test | PASS | Focused Release run: 1 passed, 0 failed; all 6 fixture files scanned. | No matched fixture content was printed. |
 | `dotnet build QuotaGlass.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
 | `git diff --check` | PASS | Exit 0 with no output. | Run before commit. |
+| `eng/installer/Test-MsiMetadata.ps1` | NOT EXERCISED | Not part of the recorded release candidate. | Verifies per-user metadata, payload, shortcuts, upgrade identity, and custom-action sequencing. |
+| `eng/installer/Test-MsiLifecycle.ps1` | NOT EXERCISED | Not part of the recorded release candidate. | Verifies silent install, running-process upgrade, uninstall, preservation, and no reboot. |
 
 ## Sign-off
 
