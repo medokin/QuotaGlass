@@ -76,7 +76,10 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         using var request = new HttpRequestMessage(HttpMethod.Get, UsageUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using HttpResponseMessage response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+        using HttpResponseMessage response = await client
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
 
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
@@ -135,7 +138,9 @@ public sealed class OpenCodeGoProvider : IStatusProvider
     private ImmutableArray<UsageWindow> ReadWindows(JsonElement root)
     {
         var windows = ImmutableArray.CreateBuilder<UsageWindow>();
-        if (!root.TryGetProperty("usage", out JsonElement usage) || usage.ValueKind != JsonValueKind.Object)
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("usage", out JsonElement usage) ||
+            usage.ValueKind != JsonValueKind.Object)
         {
             return windows.ToImmutable();
         }

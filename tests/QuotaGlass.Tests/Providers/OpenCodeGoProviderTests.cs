@@ -53,11 +53,13 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         Uri? requestUri = null;
         AuthenticationHeaderValue? authorization = null;
         string[] acceptedMediaTypes = [];
+        bool noStore = false;
         var handler = new StubHttpMessageHandler(request =>
         {
             requestUri = request.RequestUri;
             authorization = request.Headers.Authorization;
             acceptedMediaTypes = request.Headers.Accept.Select(value => value.MediaType!).ToArray();
+            noStore = request.Headers.CacheControl?.NoStore == true;
             return JsonResponse(ReadFixture("opencode-go-usage.json"));
         });
 
@@ -68,6 +70,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         Assert.Equal("Bearer", authorization?.Scheme);
         Assert.Equal("unit-test-api-key", authorization?.Parameter);
         Assert.Equal(["application/json"], acceptedMediaTypes);
+        Assert.True(noStore);
     }
 
     [Fact]
@@ -158,6 +161,49 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         Assert.Null(result.Snapshot);
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("\"usage\"")]
+    public async Task FetchAsync_NonObjectJsonRootReturnsInvalidResponse(string body)
+    {
+        // Catches valid JSON scalars and arrays escaping the provider as unhandled mapping exceptions.
+        var handler = new StubHttpMessageHandler(_ => JsonResponse(body));
+
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.InvalidResponse, result.Outcome);
+        Assert.Null(result.Snapshot);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "60", 60)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, null, 300)]
+    public async Task FetchAsync_RateLimitReturnsSafeCooldown(
+        HttpStatusCode statusCode,
+        string? retryAfter,
+        int expectedSeconds)
+    {
+        // Catches OpenCode Go rate limiting erasing retained data or bypassing the shared cooldown policy.
+        var handler = new StubHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(statusCode);
+            if (retryAfter is not null)
+            {
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+            }
+
+            return response;
+        });
+
+        ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.RateLimited, result.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), result.RetryAfter);
+        Assert.Null(result.Snapshot);
+    }
+
     [Fact]
     public async Task FetchAsync_ServerFailureReturnsTransientFailure()
     {
@@ -169,6 +215,35 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         Assert.Equal(ProviderFetchOutcome.TransientFailure, result.Outcome);
         Assert.Equal(HttpStatusCode.BadGateway, result.StatusCode);
         Assert.Null(result.Snapshot);
+    }
+
+    [Fact]
+    public async Task FetchAsync_StreamsResponseIntoBoundedJsonReader()
+    {
+        // Catches HttpClient buffering the entire body before the shared JSON size limit is applied.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new HeadersOnlyContent(ReadFixture("opencode-go-usage.json")),
+        });
+
+        ProviderSnapshot snapshot = await CreateProvider(handler).FetchSnapshotAsync(CancellationToken.None);
+
+        Assert.Equal(HealthState.Ok, snapshot.Health);
+        Assert.Equal(3, snapshot.Windows.Length);
+    }
+
+    [Fact]
+    public async Task FetchAsync_CallerCancellationPropagates()
+    {
+        // Catches a provider request that drops the poller's linked cancellation and timeout token.
+        var handler = new BlockingHttpMessageHandler();
+        using var cancellation = new CancellationTokenSource();
+
+        Task<ProviderFetchResult> fetch = CreateProvider(handler).FetchAsync(cancellation.Token);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
     }
 
     [Fact]
@@ -299,5 +374,42 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class HeadersOnlyContent : HttpContent
+    {
+        private readonly byte[] _body;
+
+        public HeadersOnlyContent(string body)
+        {
+            _body = Encoding.UTF8.GetBytes(body);
+            Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new Xunit.Sdk.XunitException("HttpClient buffered the response before bounded parsing.");
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult<Stream>(new MemoryStream(_body, writable: false));
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+    }
+
+    private sealed class BlockingHttpMessageHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable after cancellation.");
+        }
     }
 }
