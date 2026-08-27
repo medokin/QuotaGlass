@@ -23,7 +23,11 @@ public sealed class ProviderRegistry : IDisposable
         [
             new ClaudeProvider(paths.ClaudeCredentialsPath, handlers[0], SeverityFromPercent),
             new CodexProvider(paths.CodexAuthPath, handlers[1], SeverityFromPercent),
-            new OpenCodeGoProvider(paths.OpenCodeAuthPath, handlers[2], SeverityFromPercent),
+            new OpenCodeGoProvider(
+                paths.OpenCodeAuthPath,
+                handlers[2],
+                SeverityFromPercent,
+                () => GetOpenCodeConsoleSettings(_settings())),
             new OllamaProvider(handlers[3]),
         ];
     }
@@ -87,4 +91,9 @@ public sealed class ProviderRegistry : IDisposable
             DecompressionMethods.Brotli,
         PooledConnectionLifetime = ConnectionLifetime,
     };
+
+    private static OpenCodeConsoleSettings? GetOpenCodeConsoleSettings(AppSettings settings) =>
+        settings.Providers.TryGetValue("opencode-go", out ProviderSettings? provider)
+            ? provider.OpenCodeConsole
+            : null;
 }

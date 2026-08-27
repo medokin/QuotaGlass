@@ -66,6 +66,26 @@ QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The
 defaults poll once per minute while active, use 80 and 95 percent warning
 thresholds, keep the overlay hidden, and leave autostart disabled.
 
+OpenCode Console discovery is disabled by default. It can be enabled for an
+OpenCode Go account without a local API key by adding `OpenCodeConsole` to the
+existing `opencode-go` provider setting:
+
+```json
+"opencode-go": {
+  "Enabled": true,
+  "OpenCodeConsole": {
+    "Enabled": true,
+    "WorkspaceSelector": null
+  }
+}
+```
+
+QuotaGlass reads the OpenCode account database through the read-only
+`opencode db` command and keeps access tokens in memory only. A configured
+`opencode-go` API key always takes precedence. The only Go-enabled workspace is
+selected automatically. If several are eligible, the provider card lists the
+stable selector values accepted by `WorkspaceSelector`.
+
 Runtime logs are written to `%APPDATA%\QuotaGlass\log.txt`. Logs contain status
 categories only, not exception messages, headers, bodies, tokens, account IDs,
 or email addresses.

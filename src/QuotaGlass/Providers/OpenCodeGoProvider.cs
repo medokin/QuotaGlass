@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using QuotaGlass.Core;
 using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
@@ -18,6 +19,9 @@ public sealed class OpenCodeGoProvider : IStatusProvider
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
+    private readonly Func<OpenCodeConsoleSettings?> _consoleSettings;
+    private readonly IOpenCodeConsoleAccountReader _consoleAccountReader;
+    private readonly IOpenCodeConsoleGoClient _consoleClient;
 
     public OpenCodeGoProvider(
         string credentialPath,
@@ -34,12 +38,54 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            openCredential,
+            () => null,
+            new OpenCodeConsoleAccountReader(),
+            new OpenCodeConsoleGoClient(handler, severityFromPercent, timeProvider))
+    {
+    }
+
+    internal OpenCodeGoProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        Func<OpenCodeConsoleSettings?> consoleSettings,
+        TimeProvider? timeProvider = null)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            OpenCredentialStream,
+            consoleSettings,
+            new OpenCodeConsoleAccountReader(),
+            new OpenCodeConsoleGoClient(handler, severityFromPercent, timeProvider))
+    {
+    }
+
+    internal OpenCodeGoProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential,
+        Func<OpenCodeConsoleSettings?> consoleSettings,
+        IOpenCodeConsoleAccountReader consoleAccountReader,
+        IOpenCodeConsoleGoClient consoleClient)
     {
         _credentialPath = credentialPath;
         _handler = handler;
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
+        _consoleSettings = consoleSettings;
+        _consoleAccountReader = consoleAccountReader;
+        _consoleClient = consoleClient;
     }
 
     public string Id => "opencode-go";
@@ -64,14 +110,25 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
-            return NotConfigured(fetchedAt);
+            apiKey = null;
         }
 
-        if (apiKey is null)
+        if (apiKey is not null)
         {
-            return NotConfigured(fetchedAt);
+            return await FetchApiKeyAsync(apiKey, fetchedAt, cancellationToken).ConfigureAwait(false);
         }
 
+        OpenCodeConsoleSettings? consoleSettings = _consoleSettings();
+        return consoleSettings?.Enabled == true
+            ? await FetchConsoleAsync(consoleSettings, fetchedAt, cancellationToken).ConfigureAwait(false)
+            : NotConfigured(fetchedAt);
+    }
+
+    private async Task<ProviderFetchResult> FetchApiKeyAsync(
+        string apiKey,
+        DateTimeOffset fetchedAt,
+        CancellationToken cancellationToken)
+    {
         using var client = new HttpClient(_handler, disposeHandler: false);
         using var request = new HttpRequestMessage(HttpMethod.Get, UsageUri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
@@ -127,6 +184,126 @@ public sealed class OpenCodeGoProvider : IStatusProvider
                     Snapshot(HealthState.Ok, windows, null, fetchedAt),
                     response.StatusCode);
         }
+    }
+
+    private async Task<ProviderFetchResult> FetchConsoleAsync(
+        OpenCodeConsoleSettings settings,
+        DateTimeOffset fetchedAt,
+        CancellationToken cancellationToken)
+    {
+        ImmutableArray<OpenCodeConsoleAccount> discovered;
+        try
+        {
+            discovered = await _consoleAccountReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            return new ProviderFetchResult(ProviderFetchOutcome.InvalidResponse);
+        }
+
+        if (discovered.IsEmpty)
+        {
+            return NotConfigured(fetchedAt);
+        }
+
+        ImmutableArray<OpenCodeConsoleAccount> current = discovered
+            .Where(account => account.ExpiresAt is null || account.ExpiresAt > fetchedAt)
+            .ToImmutableArray();
+        if (current.IsEmpty)
+        {
+            return ConsoleAuthenticationRequired(fetchedAt);
+        }
+
+        OpenCodeConsoleFetchResult result = await _consoleClient
+            .FetchAsync(current, cancellationToken, settings.WorkspaceSelector)
+            .ConfigureAwait(false);
+        if (result.Outcome != OpenCodeConsoleFetchOutcome.Success)
+        {
+            return MapConsoleFailure(result, fetchedAt);
+        }
+
+        if (result.Workspaces.IsEmpty)
+        {
+            return settings.WorkspaceSelector is null
+                ? NotConfigured(fetchedAt)
+                : SelectionRequired([], fetchedAt);
+        }
+
+        OpenCodeConsoleWorkspace? selected;
+        if (settings.WorkspaceSelector is string selector)
+        {
+            selected = result.Workspaces.FirstOrDefault(workspace =>
+                string.Equals(workspace.Selector, selector, StringComparison.Ordinal));
+            if (selected is null)
+            {
+                return SelectionRequired(result.Workspaces, fetchedAt);
+            }
+        }
+        else if (result.Workspaces.Length == 1)
+        {
+            selected = result.Workspaces[0];
+        }
+        else
+        {
+            return SelectionRequired(result.Workspaces, fetchedAt);
+        }
+
+        return new ProviderFetchResult(
+            ProviderFetchOutcome.Success,
+            Snapshot(HealthState.Ok, selected.Windows, null, fetchedAt),
+            result.StatusCode);
+    }
+
+    private static ProviderFetchResult MapConsoleFailure(
+        OpenCodeConsoleFetchResult result,
+        DateTimeOffset fetchedAt) => result.Outcome switch
+        {
+            OpenCodeConsoleFetchOutcome.AuthenticationRequired => ConsoleAuthenticationRequired(
+                fetchedAt,
+                result.StatusCode),
+            OpenCodeConsoleFetchOutcome.RateLimited => new ProviderFetchResult(
+                ProviderFetchOutcome.RateLimited,
+                statusCode: result.StatusCode,
+                retryAfter: result.RetryAfter),
+            OpenCodeConsoleFetchOutcome.InvalidResponse => new ProviderFetchResult(
+                ProviderFetchOutcome.InvalidResponse,
+                statusCode: result.StatusCode),
+            _ => new ProviderFetchResult(
+                ProviderFetchOutcome.TransientFailure,
+                statusCode: result.StatusCode),
+        };
+
+    private static ProviderFetchResult ConsoleAuthenticationRequired(
+        DateTimeOffset fetchedAt,
+        HttpStatusCode? statusCode = null) => new(
+        ProviderFetchOutcome.AuthenticationRequired,
+        Snapshot(HealthState.AuthExpired, [], "re-auth: run opencode console login", fetchedAt),
+        statusCode);
+
+    private static ProviderFetchResult SelectionRequired(
+        ImmutableArray<OpenCodeConsoleWorkspace> workspaces,
+        DateTimeOffset fetchedAt)
+    {
+        const string settingPath = "Providers.opencode-go.OpenCodeConsole.WorkspaceSelector";
+        if (workspaces.IsEmpty)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.NotConfigured,
+                Snapshot(
+                    HealthState.Unreachable,
+                    [],
+                    $"configured {settingPath} is not available",
+                    fetchedAt));
+        }
+
+        string selectors = string.Join(", ", workspaces.Select(workspace => workspace.Selector));
+        return new ProviderFetchResult(
+            ProviderFetchOutcome.NotConfigured,
+            Snapshot(
+                HealthState.Unreachable,
+                [],
+                $"set {settingPath} to one of: {selectors}",
+                fetchedAt));
     }
 
     private string? ReadApiKey()
