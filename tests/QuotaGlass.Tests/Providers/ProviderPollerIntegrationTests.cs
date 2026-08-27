@@ -92,6 +92,31 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaudeCredentialRemovalOmitsProviderWithoutAnotherFetch()
+    {
+        // Break caught: a provider whose local credential disappears remains visible or performs a fetch.
+        var handler = new StubHttpMessageHandler(message =>
+            JsonResponse(message.RequestUri!.AbsolutePath.EndsWith("profile", StringComparison.Ordinal)
+                ? ReadFixture("claude-profile.json")
+                : ReadFixture("claude-usage.json")));
+        string credentialPath = _directory.WriteFile(
+            "removed-claude-credentials.json",
+            CreateClaudeCredential());
+        var provider = new ClaudeProvider(credentialPath, handler, SeverityFromPercent);
+        StatusPoller poller = CreatePoller(provider);
+
+        ProviderSnapshot present = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        int requestsBeforeRemoval = handler.RequestCount;
+        File.Delete(credentialPath);
+        StatusReport removed = await poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.Equal("claude", present.Id);
+        Assert.Empty(removed.Providers);
+        Assert.Equal(requestsBeforeRemoval, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task OpenCodeGoOperationalFailuresRetainLastGoodDataUntilRecovery()
     {
         // Break caught: an OpenCode Go outage erases account-wide windows instead of using poller retention.
@@ -160,12 +185,13 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         "default")),
                 new OpenCodeCompanySeatFetchResult(
                     OpenCodeCompanySeatFetchOutcome.InvalidResponse,
-                    StatusCode: HttpStatusCode.OK)));
+                    StatusCode: HttpStatusCode.OK)),
+            IsOpenCodeCommandAvailable);
         AppSettings settings = AppSettings.Default with
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 provider.Id,
-                new ProviderSettings(true)),
+                new ProviderSettings()),
         };
         var poller = new StatusPoller(
             [provider],
@@ -205,7 +231,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 1 => Task.FromResult(SuccessfulBudget(25)),
                 2 => throw new HttpRequestException("synthetic transport failure"),
                 _ => throw new InvalidOperationException("Unexpected client request."),
-            }));
+            }),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -245,7 +272,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
 
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 throw new InvalidOperationException("Unreachable.");
-            }));
+            }),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider, TimeSpan.FromMilliseconds(50));
 
         ProviderSnapshot first = Assert.Single(
@@ -275,7 +303,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 new(invalid
                     ? OpenCodeConsoleActiveWorkspaceReadOutcome.InvalidResponse
                     : OpenCodeConsoleActiveWorkspaceReadOutcome.TransientFailure)),
-            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+            new SequencedCompanySeatClient(SuccessfulBudget(25)),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -305,7 +334,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                 2 => throw new IOException("synthetic command failure"),
                 _ => throw new InvalidOperationException("Unexpected workspace read."),
             }),
-            new SequencedCompanySeatClient(SuccessfulBudget(25)));
+            new SequencedCompanySeatClient(SuccessfulBudget(25)),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider);
 
         ProviderSnapshot first = Assert.Single(
@@ -350,7 +380,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         RetryAfter: TimeSpan.FromMinutes(5)),
                     3 => SuccessfulBudget(75),
                     _ => throw new InvalidOperationException("Unexpected client request."),
-                })));
+                })),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(provider, timeProvider: time);
 
         await poller.PollOnceAsync(CancellationToken.None);
@@ -429,10 +460,11 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
                         RetryAfter: TimeSpan.FromMinutes(5)),
                     3 => SuccessfulBudget(75),
                     _ => throw new InvalidOperationException("Unexpected client request."),
-                })));
+                })),
+            IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(
             provider,
-            TimeSpan.FromMilliseconds(50),
+            failureKind == "timeout" ? TimeSpan.FromSeconds(1) : null,
             time);
 
         await poller.PollOnceAsync(CancellationToken.None);
@@ -514,8 +546,10 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         var handler = new StubHttpMessageHandler(message => Interlocked.Increment(ref request) switch
         {
             1 => JsonResponse(ReadFixture("ollama-version.json")),
-            2 => JsonResponse(ReadFixture("ollama-ps.json")),
-            3 => throw new HttpRequestException("refused"),
+            2 => JsonResponse(ReadFixture("ollama-version.json")),
+            3 => JsonResponse(ReadFixture("ollama-ps.json")),
+            4 => JsonResponse(ReadFixture("ollama-version.json")),
+            5 => throw new HttpRequestException("refused"),
             _ => throw new InvalidOperationException($"Unexpected request: {message.RequestUri}"),
         });
         StatusPoller poller = CreatePoller(new OllamaProvider(handler));
@@ -531,11 +565,23 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
     {
         // Break caught: a completed rate-limit response mutates scheduler state before poll cancellation commits.
         int request = 0;
-        var handler = new StubHttpMessageHandler(_ => Interlocked.Increment(ref request) switch
+        var firstCodexRequestCompleted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(_ =>
         {
-            1 => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
-            2 => JsonResponse(ReadFixture("codex-wham.json")),
-            _ => throw new InvalidOperationException("Unexpected HTTP request."),
+            int currentRequest = Interlocked.Increment(ref request);
+            HttpResponseMessage response = currentRequest switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
+                2 => JsonResponse(ReadFixture("codex-wham.json")),
+                _ => throw new InvalidOperationException("Unexpected HTTP request."),
+            };
+            if (currentRequest == 1)
+            {
+                firstCodexRequestCompleted.TrySetResult();
+            }
+
+            return response;
         });
         string credentialPath = _directory.WriteFile(
             "codex-cancel-auth.json",
@@ -548,7 +594,9 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         using var cancellation = new CancellationTokenSource();
 
         Task<StatusReport> canceledPoll = poller.PollOnceAsync(cancellation.Token);
-        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await Task.WhenAll(
+            blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1)),
+            firstCodexRequestCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1)));
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledPoll);
         blocking.CompleteOk();
@@ -583,7 +631,7 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 provider.Id,
-                new ProviderSettings(true)),
+                new ProviderSettings()),
         };
         return new StatusPoller(
             [provider],
@@ -595,6 +643,8 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
 
     private static Severity SeverityFromPercent(double? percent) =>
         SeverityPolicy.FromPercent(percent, 80, 95);
+
+    private static bool IsOpenCodeCommandAvailable(string command) => command == "opencode";
 
     private static OpenCodeConsoleActiveWorkspace Workspace(string accountId, string organizationId) =>
         new(accountId, $"access-{accountId}", organizationId, DateTimeOffset.UtcNow.AddHours(1));

@@ -11,7 +11,7 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class ClaudeProvider : IStatusProvider
+public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
 {
     private static readonly Uri UsageUri = new("https://api.anthropic.com/api/oauth/usage");
     private static readonly Uri ProfileUri = new("https://api.anthropic.com/api/oauth/profile");
@@ -20,6 +20,7 @@ public sealed class ClaudeProvider : IStatusProvider
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
+    private readonly Func<string, bool> _credentialProbe;
     private DateTimeOffset _profileCachedAt;
     private string? _cachedPlanLabel;
 
@@ -38,17 +39,41 @@ public sealed class ClaudeProvider : IStatusProvider
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            openCredential,
+            CredentialFilePrerequisite.Probe)
+    {
+    }
+
+    internal ClaudeProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential,
+        Func<string, bool> credentialProbe)
     {
         _credentialPath = credentialPath;
         _handler = handler;
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
+        _credentialProbe = credentialProbe;
     }
 
     public string Id => "claude";
 
     public string Label => "Claude";
+
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) =>
+        CredentialFilePrerequisite.IsPresentOrIndeterminateAsync(
+            _credentialPath,
+            _credentialProbe,
+            cancellationToken);
 
     internal static Stream OpenCredentialStream(string credentialPath) =>
         new FileStream(

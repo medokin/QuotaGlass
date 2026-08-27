@@ -8,6 +8,48 @@ namespace QuotaGlass.Tests.Providers;
 
 public sealed class OllamaProviderTests
 {
+    [Theory]
+    [InlineData(HttpStatusCode.OK)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task IsAvailableAsync_AnyLocalHttpResponseIsAvailable(HttpStatusCode statusCode)
+    {
+        // Catches discovery treating HTTP status or response content as a missing local service.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent("not-json", Encoding.UTF8, "text/plain"),
+        });
+
+        IProviderAvailability availability = new OllamaProvider(handler);
+        bool result = await availability.IsAvailableAsync(CancellationToken.None);
+
+        Assert.True(result);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_ConnectionFailureIsUnavailable()
+    {
+        // Catches a refused local connection being reported as discovered.
+        var handler = new StubHttpMessageHandler(_ => throw new HttpRequestException("refused"));
+
+        IProviderAvailability availability = new OllamaProvider(handler);
+        bool result = await availability.IsAvailableAsync(CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_CallerCancellationPropagates()
+    {
+        // Catches cancellation being reclassified as an unavailable local service.
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new OllamaProvider(new CancellationAwareHttpMessageHandler())
+                .IsAvailableAsync(cancellationSource.Token));
+    }
+
     [Fact]
     public async Task FetchAsync_ProducesInfoWithoutUsageWindows()
     {
