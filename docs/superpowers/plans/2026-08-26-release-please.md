@@ -154,7 +154,15 @@ branch `master`. Grant `contents: write`, `pull-requests: write`, and
 creates or updates its pull request, verify the expected repository, branches,
 Conventional Commit title, body, and generated file allowlist. Create the
 trusted title check for its head SHA and dispatch `build.yml` on the release
-branch. This small integration guard does not calculate a version or changelog.
+branch. Wait for the newly dispatched run, require its head SHA and exact job
+set, workflow identity, branch, event, and bounded successful conclusions.
+Record both successful jobs as check-run attestations on the pull request SHA
+with links to the original jobs because dispatch checks are omitted from the PR
+rollup.
+Obtain the run ID directly from the dispatch response. On reruns, rediscover the
+single open generated pull request by repository, exact branch, base, title,
+and pending-release label so a partial failure can be repaired idempotently.
+This small integration guard does not calculate a version or changelog.
 
 On recovery, check out `master`, require the input tag to equal `v` plus the
 root manifest version, require the GitHub Release to be a draft, and resolve the

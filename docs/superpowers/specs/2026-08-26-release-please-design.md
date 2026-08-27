@@ -90,9 +90,20 @@ For feature and maintenance pushes, Release Please creates or updates the
 release pull request. The trusted job verifies that the pull request has the
 expected Conventional Commit title, body, repository branches, and three
 generated files. It creates the required title check on the pull request SHA
-and dispatches the normal build workflow on the release branch. The dispatch
-is a documented `GITHUB_TOKEN` exception, so no personal token is needed. No
-publication jobs run.
+and dispatches the normal build workflow on the release branch. It waits for
+the returned run ID, verifies its workflow ID, workflow name, branch, SHA,
+event, bounded job set, and successful conclusions. Because GitHub excludes
+workflow-dispatch job checks from the pull request rollup, the trusted workflow
+creates check-run attestations on the pull request SHA that link to the original
+jobs. The dispatch is a documented `GITHUB_TOKEN` exception, and the GitHub CLI
+is explicitly bound to the current repository because this path needs no
+checkout. No personal token is needed. No publication jobs run.
+
+The dispatch asks GitHub to return the new workflow run ID directly. On a
+workflow rerun, the job rediscovers the single open generated pull request by
+its exact same-repository branch, title, base, and pending-release label. This
+makes timeout and partial-API failure recovery idempotent without ambiguous run
+list polling.
 
 After a maintainer merges the release pull request, Release Please creates a
 `vMAJOR.MINOR.PATCH` tag and a draft GitHub Release. Draft release creation and
@@ -188,8 +199,9 @@ The following settings are prerequisites and are documented as manual setup:
 
 Bot-created Release Please pull request events can produce approval-required
 runs under GitHub's current token policy. The trusted release workflow creates
-the title check and uses `workflow_dispatch` for the required build instead of
-requiring a personal access token. A duplicate approval-required run can remain
+the title check, uses `workflow_dispatch` for the required build, verifies the
+exact run, and records its successful jobs as required checks. A personal
+access token is not required. A duplicate approval-required run can remain
 unapproved. A GitHub App or fine-grained token is optional only if maintainers
 later want every automatic pull request event to run unattended.
 
@@ -200,6 +212,8 @@ later want every automatic pull request event to run unattended.
 - The default `GITHUB_TOKEN` is used with job-scoped permissions.
 - Release pull request checks run only after the trusted workflow verifies the
   repository, branches, generated file allowlist, title, and body.
+- Check-bridge retries rediscover the exact open Release Please pull request and
+  bind every successful check to its current head SHA.
 - No credentials, responses, or runtime data enter release artifacts.
 - A release remains a draft until the exact Windows candidate is verified.
 - Published tags and releases are immutable. Corrections use a new patch
