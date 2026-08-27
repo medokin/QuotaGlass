@@ -63,9 +63,11 @@ Using `!` in the title is the preferred breaking-change notation because it is
 also covered by title validation.
 
 The Release Please pull request is never auto-merged. Protection on `master`
-must require a pull request, at least one human approval, and the existing build
-and new title checks. Direct pushes and bypasses must be prevented or limited to
-explicit administrators.
+must require a pull request and the existing build and new title checks. Direct
+pushes and routine bypasses must be prevented. Because the repository currently
+has one maintainer, the deliberate merge of the generated release pull request
+is the human version and changelog gate. Require an independent approval after
+a second trusted maintainer is added.
 
 ## Release Workflow
 
@@ -162,12 +164,17 @@ The following settings are prerequisites and are documented as manual setup:
 1. Enable squash merging and disable merge commits and rebasing.
 2. Set the default squash commit title to the pull request title and the default
    squash body to the pull request body.
-3. Protect `master` with required pull requests, at least one approval, required
-   build and title-validation checks, and controlled bypasses.
+3. Protect `master` with required pull requests, required build and
+   title-validation checks, resolved conversations, and no routine bypasses.
+   Use zero required approvals while the repository has one maintainer; require
+   an independent approval after a second trusted maintainer is added.
 4. Allow GitHub Actions to create pull requests.
 5. Keep default workflow permissions read-only. The workflows request narrower
    job-level write permissions where required.
-6. Create a protected `release` environment with a required human reviewer.
+6. Create a protected `release` environment with `medokin` as the required
+   reviewer, self-review allowed for the solo-maintainer setup, and deployments
+   limited to `master`. Prevent self-review after adding a second trusted
+   maintainer.
 7. Enable repository release immutability before the first publication.
 
 Bot-created Release Please pull request workflow runs may require maintainer

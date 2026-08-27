@@ -61,8 +61,9 @@ request code.
    release pull request titled `chore(release): release X.Y.Z`.
 3. The release pull request updates `.release-please-manifest.json`,
    `version.txt`, and the generated `CHANGELOG.md`.
-4. A maintainer reviews the proposed version and user-facing changelog, obtains
-   the required approval, and squash merges the release pull request.
+4. A maintainer reviews the proposed version and user-facing changelog, then
+   deliberately squash merges the release pull request. That merge is the
+   version and changelog approval gate in the current solo-maintainer setup.
 5. The merge reruns `Release Please`. It creates a `vX.Y.Z` tag and a draft
    GitHub Release.
 6. The workflow checks out the tagged commit on `windows-latest`, restores,
@@ -167,14 +168,18 @@ its artifacts.
 Protect `master` with a branch protection rule or repository ruleset that:
 
 - Requires a pull request before merging.
-- Requires at least one human approval.
 - Requires the `Secret scan`, `Build, test, and publish`, and
   `Validate PR title` checks. Add `Validate PR title` after that job has run at
   least once on the default branch.
 - Requires conversations to be resolved.
 - Disallows force pushes and deletion.
-- Prevents direct pushes and limits bypass permissions to explicitly selected
-  administrators.
+- Prevents direct pushes and has no routine bypass actors.
+
+QuotaGlass currently has one maintainer, so the `Protect master` ruleset uses
+zero required pull request approvals. A maintainer still has to deliberately
+merge the generated release pull request, which is the human version and
+changelog gate. If a second trusted maintainer is added, require at least one
+approval and require approval of the latest reviewable push.
 
 If required checks are enabled immediately, remember that bot-created pull
 request runs may need manual workflow approval before the checks can complete.
@@ -192,9 +197,13 @@ immutable.
 
 Create an environment named `release` under **Settings > Environments**:
 
-- Add at least one required reviewer.
-- Prevent self-review when the repository plan supports it.
-- Limit deployment branches to `master` or protected branches.
+- Add `medokin` as the required reviewer while the repository has one
+  maintainer.
+- Allow self-review for the solo-maintainer setup.
+- Limit deployment branches to `master`.
+
+If a second trusted maintainer is added, add that maintainer as a reviewer and
+prevent self-review.
 
 The reviewer approves publication only after testing the exact workflow
 artifact and confirming release immutability is enabled. The environment
