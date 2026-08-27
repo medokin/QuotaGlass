@@ -23,7 +23,8 @@ public sealed class ProviderRegistry : IDisposable
         [
             new ClaudeProvider(paths.ClaudeCredentialsPath, handlers[0], SeverityFromPercent),
             new CodexProvider(paths.CodexAuthPath, handlers[1], SeverityFromPercent),
-            new OllamaProvider(handlers[2]),
+            new OpenCodeGoProvider(paths.OpenCodeAuthPath, handlers[2], SeverityFromPercent),
+            new OllamaProvider(handlers[3]),
         ];
     }
 
@@ -45,7 +46,7 @@ public sealed class ProviderRegistry : IDisposable
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(paths);
 
-        SocketsHttpHandler[] handlers = Enumerable.Range(0, 3)
+        SocketsHttpHandler[] handlers = Enumerable.Range(0, 4)
             .Select(static _ => CreateHandler())
             .ToArray();
 
