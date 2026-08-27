@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/medokin/QuotaGlass/compare/v0.1.0...v0.1.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **release:** allow draft asset reconciliation ([#28](https://github.com/medokin/QuotaGlass/issues/28)) ([c6a461e](https://github.com/medokin/QuotaGlass/commit/c6a461eee9c9104d94968f176e193d93aa37e944))
+* **release:** restore runtime pack before publish ([#26](https://github.com/medokin/QuotaGlass/issues/26)) ([47dac5c](https://github.com/medokin/QuotaGlass/commit/47dac5c02c87ed8f44cbcd183e19580375bac51a))
+
 ## [0.1.0](https://github.com/medokin/QuotaGlass/compare/v0.0.1...v0.1.0) (2026-08-27)
 
 
