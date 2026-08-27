@@ -394,6 +394,185 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task PollOnceAsync_UnavailableProviderIsOmittedWithoutFetching()
+    {
+        // Break caught: an unavailable provider is fetched and published as a failure snapshot.
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ => Task.FromResult(false),
+        };
+        StatusPoller poller = CreatePoller([provider]);
+
+        StatusReport report = await poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.Empty(report.Providers);
+        Assert.Equal(0, provider.FetchCount);
+        Assert.Equal(1, provider.AvailabilityCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_ReevaluatesAvailabilityAcrossPolls()
+    {
+        // Break caught: availability is cached, so provider appearance or disappearance is not reflected per poll.
+        bool isAvailable = false;
+        var provider = new AvailabilityStatusProvider("codex")
+        {
+            Availability = _ => Task.FromResult(isAvailable),
+        };
+        StatusPoller poller = CreatePoller([provider]);
+
+        StatusReport unavailable = await poller.PollOnceAsync(CancellationToken.None);
+        isAvailable = true;
+        StatusReport available = await poller.PollOnceAsync(CancellationToken.None);
+        isAvailable = false;
+        StatusReport unavailableAgain = await poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.Empty(unavailable.Providers);
+        Assert.Equal("codex", Assert.Single(available.Providers).Id);
+        Assert.Empty(unavailableAgain.Providers);
+        Assert.Equal(3, provider.AvailabilityCount);
+        Assert.Equal(1, provider.FetchCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_UnavailableCycleClearsProviderCooldown()
+    {
+        // Break caught: an unavailable cycle leaves retry-after state that suppresses a fresh fetch after discovery.
+        bool isAvailable = true;
+        var provider = new AvailabilityStatusProvider("codex")
+        {
+            Availability = _ => Task.FromResult(isAvailable),
+            Fetch = (invocation, _) => Task.FromResult(invocation == 1
+                ? new ProviderFetchResult(
+                    ProviderFetchOutcome.RateLimited,
+                    statusCode: HttpStatusCode.TooManyRequests,
+                    retryAfter: TimeSpan.FromMinutes(5))
+                : new ProviderFetchResult(
+                    ProviderFetchOutcome.Success,
+                    FakeStatusProvider.Snapshot("codex", planLabel: "fresh"))),
+        };
+        StatusPoller poller = CreatePoller([provider]);
+
+        await poller.PollOnceAsync(CancellationToken.None);
+        isAvailable = false;
+        StatusReport unavailable = await poller.PollOnceAsync(CancellationToken.None);
+        isAvailable = true;
+        ProviderSnapshot fresh = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+        Assert.Empty(unavailable.Providers);
+        Assert.Equal("fresh", fresh.PlanLabel);
+        Assert.Equal(2, provider.FetchCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_UnavailableProviderDoesNotSuppressOrdinaryOrAvailableProviders()
+    {
+        // Break caught: filtering one unavailable provider drops neighbors or reorders the survivors.
+        var unavailable = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ => Task.FromResult(false),
+        };
+        FakeStatusProvider ordinary = FakeStatusProvider.Returning(
+            "custom",
+            FakeStatusProvider.Snapshot("custom"));
+        var available = new AvailabilityStatusProvider("ollama");
+        StatusPoller poller = CreatePoller([unavailable, ordinary, available]);
+
+        ProviderSnapshot[] snapshots = (await poller.PollOnceAsync(CancellationToken.None)).Providers.ToArray();
+
+        Assert.Equal(["custom", "ollama"], snapshots.Select(snapshot => snapshot.Id));
+        Assert.Equal(1, ordinary.InvocationCount);
+        Assert.Equal(1, available.FetchCount);
+        Assert.Equal(0, unavailable.FetchCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_CallerCancellationDuringAvailabilityPropagates()
+    {
+        // Break caught: caller cancellation during discovery is converted into an unavailable provider result.
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = async cancellationToken =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return true;
+            },
+        };
+        StatusPoller poller = CreatePoller([provider], providerTimeout: TimeSpan.FromMinutes(1));
+        using var cancellation = new CancellationTokenSource();
+
+        Task<StatusReport> poll = poller.PollOnceAsync(cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => poll);
+        Assert.Equal(0, provider.FetchCount);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_AvailabilityExceptionIsSanitizedAndProviderIsOmitted()
+    {
+        // Break caught: discovery exceptions publish providers or leak exception messages into the log.
+        const string secret = "availability-secret";
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string logPath = Path.Combine(directory.Path, "availability-exception.log");
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ => throw new IOException(secret),
+        };
+        var poller = new StatusPoller(
+            [provider],
+            Settings,
+            new RollingFileLog(logPath));
+
+        StatusReport report = await poller.PollOnceAsync(CancellationToken.None);
+        string log = await File.ReadAllTextAsync(logPath);
+
+        Assert.Empty(report.Providers);
+        Assert.Equal(0, provider.FetchCount);
+        Assert.Contains("provider=claude", log, StringComparison.Ordinal);
+        Assert.Contains("exception=IOException", log, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, log, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_AvailabilityTimeoutIsSanitizedAndProviderIsOmitted()
+    {
+        // Break caught: discovery can hang past the provider timeout or is treated as a fetch failure snapshot.
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string logPath = Path.Combine(directory.Path, "availability-timeout.log");
+        var provider = new AvailabilityStatusProvider("ollama")
+        {
+            Availability = async cancellationToken =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return true;
+            },
+        };
+        var poller = new StatusPoller(
+            [provider],
+            Settings,
+            new RollingFileLog(logPath),
+            providerTimeout: TimeSpan.FromMilliseconds(20));
+
+        StatusReport report = await poller
+            .PollOnceAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(1));
+        string log = await File.ReadAllTextAsync(logPath);
+
+        Assert.Empty(report.Providers);
+        Assert.Equal(0, provider.FetchCount);
+        Assert.Contains("provider=ollama", log, StringComparison.Ordinal);
+        Assert.Contains("timed-out", log, StringComparison.Ordinal);
+        Assert.Contains("exception=TaskCanceledException", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RequestRefresh_WakesRunLoopBeforeTimerTick()
     {
         // Break caught: refresh requests wait for the scheduled cadence.
@@ -928,6 +1107,42 @@ public sealed class StatusPollerTests : IDisposable
         foreach (TemporaryDirectory directory in _directories)
         {
             directory.Dispose();
+        }
+    }
+
+    private sealed class AvailabilityStatusProvider(string id) : IStatusProvider, IProviderAvailability
+    {
+        private int _availabilityCount;
+        private int _fetchCount;
+
+        public string Id { get; } = id;
+
+        public string Label => Id;
+
+        public int AvailabilityCount => Volatile.Read(ref _availabilityCount);
+
+        public int FetchCount => Volatile.Read(ref _fetchCount);
+
+        public Func<CancellationToken, Task<bool>> Availability { get; init; } =
+            _ => Task.FromResult(true);
+
+        public Func<int, CancellationToken, Task<ProviderFetchResult>>? Fetch { get; init; }
+
+        public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _availabilityCount);
+            return await Availability(cancellationToken);
+        }
+
+        public Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int invocation = Interlocked.Increment(ref _fetchCount);
+            return Fetch is null
+                ? Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.Success,
+                    FakeStatusProvider.Snapshot(Id)))
+                : Fetch(invocation, cancellationToken);
         }
     }
 

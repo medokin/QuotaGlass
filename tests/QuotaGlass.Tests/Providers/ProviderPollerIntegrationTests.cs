@@ -92,6 +92,31 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaudeCredentialRemovalOmitsProviderWithoutAnotherFetch()
+    {
+        // Break caught: a provider whose local credential disappears remains visible or performs a fetch.
+        var handler = new StubHttpMessageHandler(message =>
+            JsonResponse(message.RequestUri!.AbsolutePath.EndsWith("profile", StringComparison.Ordinal)
+                ? ReadFixture("claude-profile.json")
+                : ReadFixture("claude-usage.json")));
+        string credentialPath = _directory.WriteFile(
+            "removed-claude-credentials.json",
+            CreateClaudeCredential());
+        var provider = new ClaudeProvider(credentialPath, handler, SeverityFromPercent);
+        StatusPoller poller = CreatePoller(provider);
+
+        ProviderSnapshot present = Assert.Single(
+            (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+        int requestsBeforeRemoval = handler.RequestCount;
+        File.Delete(credentialPath);
+        StatusReport removed = await poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.Equal("claude", present.Id);
+        Assert.Empty(removed.Providers);
+        Assert.Equal(requestsBeforeRemoval, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task OpenCodeGoOperationalFailuresRetainLastGoodDataUntilRecovery()
     {
         // Break caught: an OpenCode Go outage erases account-wide windows instead of using poller retention.
@@ -514,8 +539,10 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         var handler = new StubHttpMessageHandler(message => Interlocked.Increment(ref request) switch
         {
             1 => JsonResponse(ReadFixture("ollama-version.json")),
-            2 => JsonResponse(ReadFixture("ollama-ps.json")),
-            3 => throw new HttpRequestException("refused"),
+            2 => JsonResponse(ReadFixture("ollama-version.json")),
+            3 => JsonResponse(ReadFixture("ollama-ps.json")),
+            4 => JsonResponse(ReadFixture("ollama-version.json")),
+            5 => throw new HttpRequestException("refused"),
             _ => throw new InvalidOperationException($"Unexpected request: {message.RequestUri}"),
         });
         StatusPoller poller = CreatePoller(new OllamaProvider(handler));

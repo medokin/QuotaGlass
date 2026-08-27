@@ -80,7 +80,15 @@ public sealed class StatusPoller : IActivityCadencePoller
 
             ProviderAttempt[] attempts = await Task.WhenAll(fetches).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            ProviderSnapshot[] providers = attempts.Select(ApplyAttempt).ToArray();
+            foreach (ProviderAttempt unavailable in attempts.Where(IsUnavailable))
+            {
+                CommitUnavailable(unavailable);
+            }
+
+            ProviderSnapshot[] providers = attempts
+                .Where(attempt => !IsUnavailable(attempt))
+                .Select(ApplyAttempt)
+                .ToArray();
 
             report = new StatusReport(_timeProvider.GetUtcNow(), providers.ToImmutableArray());
             Volatile.Write(ref _current, report);
@@ -196,6 +204,15 @@ public sealed class StatusPoller : IActivityCadencePoller
         ProviderSnapshot? previous,
         CancellationToken cancellationToken)
     {
+        ProviderAttempt? unavailable = await CheckAvailabilityAsync(
+            provider,
+            previous,
+            cancellationToken).ConfigureAwait(false);
+        if (unavailable is not null)
+        {
+            return unavailable;
+        }
+
         if (_cooldowns.TryGetValue(provider.Id, out DateTimeOffset cooldownUntil) &&
             cooldownUntil > _timeProvider.GetUtcNow())
         {
@@ -228,6 +245,70 @@ public sealed class StatusPoller : IActivityCadencePoller
         }
 
         return await FetchProviderAsync(provider, previous, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ProviderAttempt?> CheckAvailabilityAsync(
+        IStatusProvider provider,
+        ProviderSnapshot? previous,
+        CancellationToken cancellationToken)
+    {
+        if (provider is not IProviderAvailability availability)
+        {
+            return null;
+        }
+
+        using var timeout = new CancellationTokenSource(_providerTimeout, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+
+        try
+        {
+            bool isAvailable = await availability.IsAvailableAsync(linked.Token).ConfigureAwait(false);
+            return isAvailable
+                ? null
+                : new ProviderAttempt(provider, previous, ProviderAttemptKind.Unavailable);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        {
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.AvailabilityTimedOut,
+                Exception: exception);
+        }
+        catch (Exception exception)
+        {
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.AvailabilityFailed,
+                Exception: exception);
+        }
+    }
+
+    private static bool IsUnavailable(ProviderAttempt attempt) => attempt.Kind is
+        ProviderAttemptKind.Unavailable or
+        ProviderAttemptKind.AvailabilityTimedOut or
+        ProviderAttemptKind.AvailabilityFailed;
+
+    private void CommitUnavailable(ProviderAttempt attempt)
+    {
+        _cooldowns.TryRemove(attempt.Provider.Id, out _);
+        _retentionScopes.TryRemove(attempt.Provider.Id, out _);
+        _log.Write(
+            LogArea.Provider,
+            attempt.Kind switch
+            {
+                ProviderAttemptKind.Unavailable => LogOutcome.Unreachable,
+                ProviderAttemptKind.AvailabilityTimedOut => LogOutcome.TimedOut,
+                ProviderAttemptKind.AvailabilityFailed => LogOutcome.Failed,
+                _ => throw new InvalidOperationException("Validated availability outcome was not mapped."),
+            },
+            exception: attempt.Exception,
+            providerId: attempt.Provider.Id);
     }
 
     private async Task<ProviderAttempt?> RefreshRetentionScopeAsync(
@@ -705,6 +786,9 @@ public sealed class StatusPoller : IActivityCadencePoller
     {
         Completed,
         CoolingDown,
+        Unavailable,
+        AvailabilityTimedOut,
+        AvailabilityFailed,
         TimedOut,
         Failed,
     }
