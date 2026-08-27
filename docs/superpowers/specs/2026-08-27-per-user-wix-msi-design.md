@@ -135,8 +135,8 @@ Add focused PowerShell tools under `eng/installer/`:
   executable, shortcut, Apps & Features entry, product-code replacement,
   autostart cleanup, installer-owned resource removal, and preservation of a
   unique settings sentinel. Its `finally` block restores any pre-existing Run
-  value, removes only its sentinel, stops only the installed test process, and
-  attempts MSI cleanup.
+  value, removes only its sentinel, stops only its installed and portable test
+  processes, and attempts MSI cleanup.
 
 The scripts accept explicit MSI paths and expected versions. They do not read
 credential files, provider response bodies, account identifiers, or live usage

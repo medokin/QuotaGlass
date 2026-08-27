@@ -126,6 +126,7 @@ try {
         (Get-MsiProperty $database 'MSIRESTARTMANAGERCONTROL') `
         'Disable' `
         'MSIRESTARTMANAGERCONTROL'
+    Assert-Equal (Get-MsiProperty $database 'MSIRMSHUTDOWN') $null 'MSIRMSHUTDOWN'
     Assert-Equal `
         (Get-MsiProperty $database 'ARPURLINFOABOUT') `
         'https://github.com/medokin/QuotaGlass' `
@@ -216,6 +217,15 @@ try {
     $customActions = @(Get-MsiRows $database `
         'SELECT `Action`,`Type`,`Source`,`Target` FROM `CustomAction`' `
         @('Action', 'Type', 'Source', 'Target'))
+    Assert-Equal $customActions.Count 3 'Custom action count'
+    Assert-Equal `
+        @($customActions | Where-Object Action -notin @(
+            'SetARPINSTALLLOCATION',
+            'CloseInstalledQuotaGlass',
+            'AddQuotaGlassAutostartCleanup')).Count `
+        0 `
+        'Unexpected custom action count'
+
     $closeAction = @($customActions | Where-Object Action -eq 'CloseInstalledQuotaGlass')
     Assert-Equal $closeAction.Count 1 'Close application action count'
     Assert-Equal $closeAction[0].Source 'QuotaGlassInstallerActions' 'Close application binary'

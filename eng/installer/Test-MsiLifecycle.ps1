@@ -49,6 +49,8 @@ $runSubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = 'QuotaGlass'
 $msiExecPath = Join-Path $env:SystemRoot 'System32\msiexec.exe'
 $logDirectory = Join-Path ([IO.Path]::GetTempPath()) ("QuotaGlass-MsiLifecycle-$([guid]::NewGuid().ToString('N'))")
+$portableDirectory = Join-Path $logDirectory 'portable'
+$portableExecutable = Join-Path $portableDirectory 'QuotaGlass.exe'
 
 function Assert-PathExists {
     param(
@@ -258,6 +260,7 @@ if ($hadOriginalRunValue) {
 $runKey.Dispose()
 
 $testProcess = $null
+$portableProcess = $null
 $completed = $false
 [void] (New-Item -ItemType Directory -Path $logDirectory)
 [void] (New-Item -ItemType Directory -Path $dataDirectory -Force)
@@ -292,10 +295,32 @@ try {
         throw "Running test process path is '$($testProcess.Path)'."
     }
 
+    [void] (New-Item -ItemType Directory -Path $portableDirectory)
+    Copy-Item -LiteralPath $installedExecutable -Destination $portableExecutable
+    $portableProcess = Start-Process `
+        -FilePath $portableExecutable `
+        -WorkingDirectory $portableDirectory `
+        -WindowStyle Hidden `
+        -PassThru
+    Start-Sleep -Seconds 3
+    $portableProcess.Refresh()
+    if ($portableProcess.HasExited) {
+        throw "Portable QuotaGlass exited before upgrade with code $($portableProcess.ExitCode)."
+    }
+
     [void] (Invoke-MsiExec `
         -Operation Install `
         -Target $upgradeMetadata.MsiPath `
         -LogName 'upgrade.log')
+
+    $testProcess.Refresh()
+    if (-not $testProcess.HasExited) {
+        throw 'The installed QuotaGlass process remained running after upgrade.'
+    }
+    $portableProcess.Refresh()
+    if ($portableProcess.HasExited) {
+        throw "Portable QuotaGlass was closed during upgrade with code $($portableProcess.ExitCode)."
+    }
 
     Assert-ProductMissing $baseMetadata.ProductCode 'Base Apps & Features registration'
     Assert-Registration $upgradeMetadata.ProductCode $UpgradeVersion
@@ -332,6 +357,10 @@ try {
     Assert-PathMissing $startMenuDirectory 'Start Menu directory'
     Assert-ProductMissing $upgradeMetadata.ProductCode 'Apps & Features registration'
     Assert-PathExists $sentinelPath 'Settings sentinel'
+    $portableProcess.Refresh()
+    if ($portableProcess.HasExited) {
+        throw "Portable QuotaGlass was closed during uninstall with code $($portableProcess.ExitCode)."
+    }
     if (Test-RunValueExists) {
         $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runSubKey)
         try {
@@ -367,6 +396,19 @@ try {
 }
 finally {
     Stop-InstalledTestProcesses
+
+    if ($null -ne $portableProcess) {
+        try {
+            $portableProcess.Refresh()
+            if (-not $portableProcess.HasExited) {
+                Stop-Process -Id $portableProcess.Id -Force -ErrorAction Stop
+                [void] $portableProcess.WaitForExit(10000)
+            }
+        }
+        catch [System.InvalidOperationException] {
+            # The process exited between inspection and cleanup.
+        }
+    }
 
     foreach ($metadata in @($upgradeMetadata, $baseMetadata)) {
         try {
