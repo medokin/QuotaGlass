@@ -8,7 +8,8 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? timeProvider = null) : IStatusProvider
+public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? timeProvider = null)
+    : IStatusProvider, IProviderAvailability
 {
     private static readonly Uri VersionUri = new("http://localhost:11434/api/version");
     private static readonly Uri ProcessUri = new("http://localhost:11434/api/ps");
@@ -18,6 +19,21 @@ public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? tim
     public string Id => "ollama";
 
     public string Label => "Ollama";
+
+    public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = new HttpClient(_handler, disposeHandler: false);
+            using HttpResponseMessage response = await SendAsync(client, VersionUri, cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+    }
 
     public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
     {

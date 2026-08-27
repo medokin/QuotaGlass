@@ -12,6 +12,26 @@ public sealed class CodexProviderTests : IDisposable
 {
     private readonly List<TemporaryDirectory> _directories = [];
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task IsAvailableAsync_ReturnsCredentialFilePresence(bool credentialExists)
+    {
+        // Catches discovery parsing credential contents or ignoring the configured credential path.
+        var provider = new CodexProvider(
+            "auth.json",
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
+            path => path == "auth.json" && credentialExists);
+
+        IProviderAvailability availability = provider;
+        bool result = await availability.IsAvailableAsync(CancellationToken.None);
+
+        Assert.Equal(credentialExists, result);
+    }
+
     [Fact]
     public async Task FetchAsync_MapsUnixResetAndAdditionalWindows()
     {

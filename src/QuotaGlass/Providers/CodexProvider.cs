@@ -10,7 +10,7 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class CodexProvider : IStatusProvider
+public sealed class CodexProvider : IStatusProvider, IProviderAvailability
 {
     private static readonly Uri UsageUri = new("https://chatgpt.com/backend-api/wham/usage");
     private readonly string _credentialPath;
@@ -18,6 +18,7 @@ public sealed class CodexProvider : IStatusProvider
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
+    private readonly Func<string, bool> _fileExists;
 
     public CodexProvider(
         string credentialPath,
@@ -34,17 +35,35 @@ public sealed class CodexProvider : IStatusProvider
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential)
+        : this(credentialPath, handler, severityFromPercent, timeProvider, openCredential, File.Exists)
+    {
+    }
+
+    internal CodexProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential,
+        Func<string, bool> fileExists)
     {
         _credentialPath = credentialPath;
         _handler = handler;
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
+        _fileExists = fileExists;
     }
 
     public string Id => "codex";
 
     public string Label => "Codex";
+
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_fileExists(_credentialPath));
+    }
 
     internal static Stream OpenCredentialStream(string credentialPath) =>
         new FileStream(

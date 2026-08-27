@@ -11,7 +11,7 @@ using QuotaGlass.Model;
 
 namespace QuotaGlass.Providers;
 
-public sealed class OpenCodeGoProvider : IStatusProvider
+public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
 {
     private static readonly Uri UsageUri = new("https://opencode.ai/zen/go/v1/usage");
     private readonly string _credentialPath;
@@ -22,6 +22,8 @@ public sealed class OpenCodeGoProvider : IStatusProvider
     private readonly Func<OpenCodeConsoleSettings?> _consoleSettings;
     private readonly IOpenCodeConsoleAccountReader _consoleAccountReader;
     private readonly IOpenCodeConsoleGoClient _consoleClient;
+    private readonly Func<string, bool> _fileExists;
+    private readonly Func<string, bool> _commandAvailable;
 
     public OpenCodeGoProvider(
         string credentialPath,
@@ -77,6 +79,31 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         Func<OpenCodeConsoleSettings?> consoleSettings,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            openCredential,
+            consoleSettings,
+            consoleAccountReader,
+            consoleClient,
+            File.Exists,
+            CommandAvailability.IsAvailable)
+    {
+    }
+
+    internal OpenCodeGoProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential,
+        Func<OpenCodeConsoleSettings?> consoleSettings,
+        IOpenCodeConsoleAccountReader consoleAccountReader,
+        IOpenCodeConsoleGoClient consoleClient,
+        Func<string, bool> fileExists,
+        Func<string, bool> commandAvailable)
     {
         _credentialPath = credentialPath;
         _handler = handler;
@@ -86,11 +113,21 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         _consoleSettings = consoleSettings;
         _consoleAccountReader = consoleAccountReader;
         _consoleClient = consoleClient;
+        _fileExists = fileExists;
+        _commandAvailable = commandAvailable;
     }
 
     public string Id => "opencode-go";
 
     public string Label => "OpenCode Go";
+
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        bool available = _fileExists(_credentialPath) ||
+            (_consoleSettings()?.Enabled == true && _commandAvailable("opencode"));
+        return Task.FromResult(available);
+    }
 
     internal static Stream OpenCredentialStream(string credentialPath) => new FileStream(
         credentialPath,
