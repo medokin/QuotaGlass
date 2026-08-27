@@ -69,13 +69,11 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
 
     public string Label => "Claude";
 
-    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(CredentialFilePrerequisite.IsPresent(
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) =>
+        CredentialFilePrerequisite.IsPresentOrIndeterminateAsync(
             _credentialPath,
-            _credentialProbe));
-    }
+            _credentialProbe,
+            cancellationToken);
 
     internal static Stream OpenCredentialStream(string credentialPath) =>
         new FileStream(

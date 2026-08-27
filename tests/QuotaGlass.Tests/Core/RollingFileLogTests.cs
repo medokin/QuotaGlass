@@ -119,6 +119,31 @@ public sealed class RollingFileLogTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Write_OpenCodeCommandFailureUsesOnlySanitizedMetadata()
+    {
+        // Break caught: command failures lose their cause or copy raw stderr into the application log.
+        var log = new RollingFileLog(_path);
+        var exception = new OpenCodeCommandException(
+            OpenCodeCommandFailure.DatabaseBusy,
+            17);
+
+        log.Write(
+            LogArea.Provider,
+            LogOutcome.Failed,
+            exception: exception,
+            providerId: "opencode-company-seat",
+            providerOutcome: ProviderFetchOutcome.TransientFailure);
+
+        string contents = File.ReadAllText(_path);
+        Assert.Contains(
+            " command-failure=database-busy process-exit-code=17 exception=OpenCodeCommandException",
+            contents,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("stderr", contents, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("account", contents, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("secret@example.com")]
     [InlineData("codex token")]

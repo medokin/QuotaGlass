@@ -65,13 +65,11 @@ public sealed class CodexProvider : IStatusProvider, IProviderAvailability
 
     public string Label => "Codex";
 
-    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(CredentialFilePrerequisite.IsPresent(
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) =>
+        CredentialFilePrerequisite.IsPresentOrIndeterminateAsync(
             _credentialPath,
-            _credentialProbe));
-    }
+            _credentialProbe,
+            cancellationToken);
 
     internal static Stream OpenCredentialStream(string credentialPath) =>
         new FileStream(

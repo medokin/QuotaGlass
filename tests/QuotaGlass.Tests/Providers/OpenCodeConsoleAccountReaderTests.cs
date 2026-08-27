@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using QuotaGlass.Core;
 using QuotaGlass.Providers;
 using QuotaGlass.Tests.Support;
 
@@ -193,6 +194,59 @@ public sealed class OpenCodeConsoleAccountReaderTests
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read);
+    }
+
+    [Fact]
+    public async Task RunQueryAsync_NonZeroExitReportsSanitizedFailureMetadata()
+    {
+        // Break caught: a local OpenCode command failure is collapsed to an unexplained transient result.
+        using var directory = new TemporaryDirectory();
+        string commandPath = Path.Combine(directory.Path, "opencode.cmd");
+        await File.WriteAllTextAsync(
+            commandPath,
+            "@echo database is locked: sensitive-account-id 1>&2\r\n@exit /b 17\r\n");
+        var environment = new EffectiveCommandEnvironment(directory.Path, ".CMD");
+
+        OpenCodeCommandException exception = await Assert.ThrowsAsync<OpenCodeCommandException>(
+            () => OpenCodeConsoleAccountReader.RunQueryAsync(
+                "select 1;",
+                environment,
+                CancellationToken.None));
+
+        Assert.Equal(OpenCodeCommandFailure.DatabaseBusy, exception.Failure);
+        Assert.Equal(17, exception.ExitCode);
+        Assert.DoesNotContain("sensitive-account-id", exception.Message, StringComparison.Ordinal);
+
+        string logPath = Path.Combine(directory.Path, "diagnostic.log");
+        var log = new RollingFileLog(logPath);
+        log.Write(
+            LogArea.Provider,
+            LogOutcome.Failed,
+            exception: exception,
+            providerId: "opencode-company-seat",
+            providerOutcome: ProviderFetchOutcome.TransientFailure);
+        string contents = await File.ReadAllTextAsync(logPath);
+
+        Assert.Contains("command-failure=database-busy", contents, StringComparison.Ordinal);
+        Assert.Contains("process-exit-code=17", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain("sensitive-account-id", contents, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("database is busy", "DatabaseBusy")]
+    [InlineData("operation timed out", "TimedOut")]
+    [InlineData("opencode is not recognized", "CommandNotFound")]
+    [InlineData("unexpected local failure", "Failed")]
+    public void FromStderr_ClassifiesWithoutRetainingRawOutput(
+        string stderr,
+        string expected)
+    {
+        // Break caught: a known failure is misclassified or raw command output survives classification.
+        OpenCodeCommandException exception = OpenCodeCommandException.FromStderr(23, stderr);
+
+        Assert.Equal(expected, exception.Failure.ToString());
+        Assert.Equal(23, exception.ExitCode);
+        Assert.DoesNotContain(stderr, exception.Message, StringComparison.Ordinal);
     }
 
     private static OpenCodeConsoleAccountReader Reader(string json) => new(

@@ -274,7 +274,6 @@ public sealed class StatusPollerTests : IDisposable
 
     [Theory]
     [InlineData(ProviderFetchOutcome.PartialSuccess, HealthState.Degraded)]
-    [InlineData(ProviderFetchOutcome.NotConfigured, HealthState.Unreachable)]
     [InlineData(ProviderFetchOutcome.AuthenticationRequired, HealthState.AuthExpired)]
     public async Task PollOnceAsync_PublishableOutcomePublishesSnapshotAndResetsFailures(
         ProviderFetchOutcome outcome,
@@ -290,6 +289,37 @@ public sealed class StatusPollerTests : IDisposable
 
         Assert.Equal(health, published.Health);
         Assert.Equal(0, published.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_NotConfiguredProviderIsOmittedAndRetried()
+    {
+        // Break caught: a provider that reports missing configuration remains visible or is never rediscovered.
+        ProviderSnapshot notConfigured = FakeStatusProvider.Snapshot(
+            "opencode-go",
+            health: HealthState.Unreachable,
+            error: "not configured");
+        ProviderSnapshot configured = FakeStatusProvider.Snapshot(
+            "opencode-go",
+            planLabel: "Go");
+        FakeStatusProvider provider = FakeStatusProvider.SequenceResults(
+            "opencode-go",
+            [
+                _ => Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.NotConfigured,
+                    notConfigured)),
+                _ => Task.FromResult(new ProviderFetchResult(
+                    ProviderFetchOutcome.Success,
+                    configured)),
+            ]);
+        StatusPoller poller = CreatePoller([provider]);
+
+        StatusReport hidden = await poller.PollOnceAsync(CancellationToken.None);
+        StatusReport discovered = await poller.PollOnceAsync(CancellationToken.None);
+
+        Assert.Empty(hidden.Providers);
+        Assert.Equal("Go", Assert.Single(discovered.Providers).PlanLabel);
+        Assert.Equal(2, provider.InvocationCount);
     }
 
     [Fact]
@@ -586,6 +616,124 @@ public sealed class StatusPollerTests : IDisposable
             release.Set();
             await blockingFinished.Task.WaitAsync(TimeSpan.FromSeconds(1));
             await poll.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_ReusesNonCooperativeTimedOutAvailabilityProbe()
+    {
+        // Break caught: every poll starts another permanently blocked availability worker.
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ =>
+            {
+                started.TrySetResult();
+                release.Wait();
+                finished.TrySetResult();
+                return Task.FromResult(true);
+            },
+        };
+        StatusPoller poller = CreatePoller(
+            [provider],
+            providerTimeout: TimeSpan.FromMilliseconds(20));
+
+        try
+        {
+            StatusReport first = await poller
+                .PollOnceAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(1));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            StatusReport second = await poller
+                .PollOnceAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Empty(first.Providers);
+            Assert.Empty(second.Providers);
+            Assert.Equal(1, provider.AvailabilityCount);
+            Assert.Equal(0, provider.FetchCount);
+
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            ProviderSnapshot? rediscovered = null;
+            for (int attempt = 0; attempt < 10 && rediscovered is null; attempt++)
+            {
+                StatusReport report = await poller.PollOnceAsync(CancellationToken.None);
+                rediscovered = report.Providers.SingleOrDefault();
+                await Task.Yield();
+            }
+
+            Assert.Equal("claude", Assert.IsType<ProviderSnapshot>(rediscovered).Id);
+            Assert.Equal(2, provider.AvailabilityCount);
+            Assert.Equal(1, provider.FetchCount);
+        }
+        finally
+        {
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_CallerCancellationReusesBlockedAvailabilityProbeUntilCompletion()
+    {
+        // Break caught: caller cancellation detaches a blocked probe and the next poll starts a duplicate worker.
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var provider = new AvailabilityStatusProvider("claude")
+        {
+            Availability = _ =>
+            {
+                started.TrySetResult();
+                release.Wait();
+                finished.TrySetResult();
+                return Task.FromResult(true);
+            },
+        };
+        var time = new RecordingTimeProvider();
+        TimeSpan providerTimeout = TimeSpan.FromSeconds(10);
+        StatusPoller poller = CreatePoller(
+            [provider],
+            timeProvider: time,
+            providerTimeout: providerTimeout);
+        using var cancellation = new CancellationTokenSource();
+
+        try
+        {
+            Task<StatusReport> canceled = Task.Run(() => poller.PollOnceAsync(cancellation.Token));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => canceled.WaitAsync(TimeSpan.FromSeconds(1)));
+
+            StatusReport hidden = await poller
+                .PollOnceAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromMilliseconds(100));
+
+            Assert.Empty(hidden.Providers);
+            Assert.Equal(1, provider.AvailabilityCount);
+            Assert.Equal(0, provider.FetchCount);
+
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            ProviderSnapshot rediscovered = Assert.Single(
+                (await poller.PollOnceAsync(CancellationToken.None)).Providers);
+
+            Assert.Equal("claude", rediscovered.Id);
+            Assert.Equal(2, provider.AvailabilityCount);
+            Assert.Equal(1, provider.FetchCount);
+        }
+        finally
+        {
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
         }
     }
 

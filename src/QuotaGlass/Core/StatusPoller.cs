@@ -21,6 +21,7 @@ public sealed class StatusPoller : IActivityCadencePoller
     private readonly Queue<StatusReport> _notificationQueue = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _cooldowns = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ProviderRetentionScope> _retentionScopes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, AvailabilityProbe> _availabilityProbes = new(StringComparer.Ordinal);
     private readonly Channel<bool> _refreshRequests = Channel.CreateBounded<bool>(
         new BoundedChannelOptions(1)
         {
@@ -80,13 +81,13 @@ public sealed class StatusPoller : IActivityCadencePoller
 
             ProviderAttempt[] attempts = await Task.WhenAll(fetches).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            foreach (ProviderAttempt unavailable in attempts.Where(IsUnavailable))
+            foreach (ProviderAttempt hidden in attempts.Where(ShouldOmit))
             {
-                CommitUnavailable(unavailable);
+                CommitOmitted(hidden);
             }
 
             ProviderSnapshot[] providers = attempts
-                .Where(attempt => !IsUnavailable(attempt))
+                .Where(attempt => !ShouldOmit(attempt))
                 .Select(ApplyAttempt)
                 .ToArray();
 
@@ -257,26 +258,45 @@ public sealed class StatusPoller : IActivityCadencePoller
             return null;
         }
 
+        AvailabilityProbe availabilityProbe = GetAvailabilityProbe(provider, availability);
+        if (availabilityProbe.Cancellation.IsCancellationRequested)
+        {
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.AvailabilityTimedOut,
+                Exception: new TaskCanceledException());
+        }
+
         using var timeout = new CancellationTokenSource(_providerTimeout, _timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-        Task<bool> probe = Task.Run(
-            () => availability.IsAvailableAsync(linked.Token),
-            CancellationToken.None);
-        bool resultObserved = false;
 
         try
         {
-            bool isAvailable = await probe.WaitAsync(linked.Token).ConfigureAwait(false);
-            resultObserved = true;
+            bool isAvailable = await availabilityProbe.Task
+                .WaitAsync(linked.Token)
+                .ConfigureAwait(false);
+            RemoveAvailabilityProbe(provider.Id, availabilityProbe);
             return isAvailable
                 ? null
                 : new ProviderAttempt(provider, previous, ProviderAttemptKind.Unavailable);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            CancelAvailabilityProbe(availabilityProbe);
             throw;
         }
         catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        {
+            CancelAvailabilityProbe(availabilityProbe);
+            return new ProviderAttempt(
+                provider,
+                previous,
+                ProviderAttemptKind.AvailabilityTimedOut,
+                Exception: exception);
+        }
+        catch (OperationCanceledException exception) when (
+            availabilityProbe.Cancellation.IsCancellationRequested)
         {
             return new ProviderAttempt(
                 provider,
@@ -286,28 +306,92 @@ public sealed class StatusPoller : IActivityCadencePoller
         }
         catch (Exception exception)
         {
+            RemoveAvailabilityProbe(provider.Id, availabilityProbe);
             return new ProviderAttempt(
                 provider,
                 previous,
                 ProviderAttemptKind.AvailabilityFailed,
                 Exception: exception);
         }
-        finally
+    }
+
+    private AvailabilityProbe GetAvailabilityProbe(
+        IStatusProvider provider,
+        IProviderAvailability availability)
+    {
+        while (true)
         {
-            if (!resultObserved)
+            if (_availabilityProbes.TryGetValue(provider.Id, out AvailabilityProbe? existing))
             {
-                _ = ObserveAvailabilityProbeAsync(probe);
+                if (existing.Task.IsCompleted)
+                {
+                    RemoveAvailabilityProbe(provider.Id, existing);
+                    continue;
+                }
+
+                return existing;
             }
+
+            var cancellation = new CancellationTokenSource();
+            Task<bool> task = Task.Run(
+                () => availability.IsAvailableAsync(cancellation.Token),
+                CancellationToken.None);
+            var created = new AvailabilityProbe(task, cancellation);
+            if (_availabilityProbes.TryAdd(provider.Id, created))
+            {
+                _ = ObserveAvailabilityProbeAsync(provider.Id, created);
+                return created;
+            }
+
+            CancelAvailabilityProbe(created);
+            _ = DisposeAvailabilityProbeAsync(created);
         }
     }
 
-    private static async Task ObserveAvailabilityProbeAsync(Task probe)
+    private async Task ObserveAvailabilityProbeAsync(
+        string providerId,
+        AvailabilityProbe probe)
     {
         try
         {
-            await probe.ConfigureAwait(false);
+            await probe.Task.ConfigureAwait(false);
         }
         catch (Exception)
+        {
+        }
+        finally
+        {
+            RemoveAvailabilityProbe(providerId, probe);
+            probe.Cancellation.Dispose();
+        }
+    }
+
+    private static async Task DisposeAvailabilityProbeAsync(AvailabilityProbe probe)
+    {
+        try
+        {
+            await probe.Task.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+        }
+        finally
+        {
+            probe.Cancellation.Dispose();
+        }
+    }
+
+    private void RemoveAvailabilityProbe(string providerId, AvailabilityProbe probe) =>
+        _availabilityProbes.TryRemove(
+            new KeyValuePair<string, AvailabilityProbe>(providerId, probe));
+
+    private static void CancelAvailabilityProbe(AvailabilityProbe probe)
+    {
+        try
+        {
+            probe.Cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
         {
         }
     }
@@ -317,10 +401,24 @@ public sealed class StatusPoller : IActivityCadencePoller
         ProviderAttemptKind.AvailabilityTimedOut or
         ProviderAttemptKind.AvailabilityFailed;
 
-    private void CommitUnavailable(ProviderAttempt attempt)
+    private static bool ShouldOmit(ProviderAttempt attempt) =>
+        IsUnavailable(attempt) ||
+        attempt.Result?.Outcome == ProviderFetchOutcome.NotConfigured;
+
+    private void CommitOmitted(ProviderAttempt attempt)
     {
         _cooldowns.TryRemove(attempt.Provider.Id, out _);
         _retentionScopes.TryRemove(attempt.Provider.Id, out _);
+
+        if (attempt.Result is ProviderFetchResult result)
+        {
+            LogProviderResult(
+                attempt.Provider,
+                result,
+                result.Snapshot! with { ConsecutiveFailures = 0 });
+            return;
+        }
+
         _log.Write(
             LogArea.Provider,
             attempt.Kind switch
@@ -815,6 +913,10 @@ public sealed class StatusPoller : IActivityCadencePoller
         TimedOut,
         Failed,
     }
+
+    private sealed record AvailabilityProbe(
+        Task<bool> Task,
+        CancellationTokenSource Cancellation);
 
     private sealed record ProviderAttempt(
         IStatusProvider Provider,

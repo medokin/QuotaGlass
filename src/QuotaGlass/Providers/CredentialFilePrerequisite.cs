@@ -5,7 +5,16 @@ namespace QuotaGlass.Providers;
 
 internal static class CredentialFilePrerequisite
 {
-    public static bool IsPresent(string path, Func<string, bool> probe)
+    public static Task<bool> IsPresentOrIndeterminateAsync(
+        string path,
+        Func<string, bool> probe,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(IsPresentOrIndeterminate(path, probe));
+    }
+
+    public static bool IsPresentOrIndeterminate(string path, Func<string, bool> probe)
     {
         ArgumentNullException.ThrowIfNull(probe);
 

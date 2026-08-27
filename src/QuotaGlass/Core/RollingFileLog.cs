@@ -161,6 +161,15 @@ public sealed class RollingFileLog
             suffix.Append(" consecutive-failures=").Append(failures);
         }
 
+        if (exception is OpenCodeCommandException commandException)
+        {
+            suffix
+                .Append(" command-failure=")
+                .Append(ToToken(commandException.Failure))
+                .Append(" process-exit-code=")
+                .Append(commandException.ExitCode);
+        }
+
         if (exception is not null)
         {
             suffix.Append(" exception=").Append(exception.GetType().Name);
@@ -239,6 +248,15 @@ public sealed class RollingFileLog
         ProviderFetchOutcome.RateLimited => "rate-limited",
         ProviderFetchOutcome.InvalidResponse => "invalid-response",
         _ => throw new InvalidOperationException("Validated provider outcome was not mapped."),
+    };
+
+    private static string ToToken(OpenCodeCommandFailure failure) => failure switch
+    {
+        OpenCodeCommandFailure.DatabaseBusy => "database-busy",
+        OpenCodeCommandFailure.TimedOut => "timed-out",
+        OpenCodeCommandFailure.CommandNotFound => "command-not-found",
+        OpenCodeCommandFailure.Failed => "failed",
+        _ => throw new InvalidOperationException("Validated command failure was not mapped."),
     };
 
     private static bool IsSafeProviderId(string providerId) =>

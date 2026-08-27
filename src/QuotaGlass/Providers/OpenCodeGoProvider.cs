@@ -124,7 +124,9 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        bool available = CredentialFilePrerequisite.IsPresent(_credentialPath, _credentialProbe) ||
+        bool available = CredentialFilePrerequisite.IsPresentOrIndeterminate(
+            _credentialPath,
+            _credentialProbe) ||
             (_consoleSettings()?.Enabled == true && _commandAvailable("opencode"));
         return Task.FromResult(available);
     }
