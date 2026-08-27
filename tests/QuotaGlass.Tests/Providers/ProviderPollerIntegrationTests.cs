@@ -464,7 +464,7 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
             IsOpenCodeCommandAvailable);
         StatusPoller poller = CreateCompanySeatPoller(
             provider,
-            TimeSpan.FromMilliseconds(50),
+            failureKind == "timeout" ? TimeSpan.FromSeconds(1) : null,
             time);
 
         await poller.PollOnceAsync(CancellationToken.None);
