@@ -143,27 +143,6 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
-    public async Task PollOnceAsync_IncludesDisabledProviderWithoutInvokingIt()
-    {
-        // Break caught: disabling a provider removes its stable slot or still fetches it.
-        FakeStatusProvider disabled = FakeStatusProvider.Blocking("claude", "Claude");
-        AppSettings settings = Settings() with
-        {
-            Providers = AppSettings.Default.Providers.SetItem("claude", new(false)),
-        };
-        StatusPoller poller = CreatePoller([disabled], () => settings);
-
-        ProviderSnapshot snapshot = Assert.Single((await poller.PollOnceAsync(CancellationToken.None)).Providers);
-
-        Assert.Equal("claude", snapshot.Id);
-        Assert.Equal("Claude", snapshot.Label);
-        Assert.Equal(HealthState.Disabled, snapshot.Health);
-        Assert.Empty(snapshot.Windows);
-        Assert.Empty(snapshot.Info);
-        Assert.Equal(0, disabled.InvocationCount);
-    }
-
-    [Fact]
     public async Task PollOnceAsync_SuccessReplacesSnapshotAndResetsFailureCount()
     {
         // Break caught: recovery keeps retained data or a nonzero failure count.

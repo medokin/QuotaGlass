@@ -165,7 +165,7 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 provider.Id,
-                new ProviderSettings(true)),
+                new ProviderSettings()),
         };
         var poller = new StatusPoller(
             [provider],
@@ -583,7 +583,7 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         {
             Providers = AppSettings.Default.Providers.SetItem(
                 provider.Id,
-                new ProviderSettings(true)),
+                new ProviderSettings()),
         };
         return new StatusPoller(
             [provider],

@@ -66,7 +66,6 @@ public sealed class StatusPoller : IActivityCadencePoller
         await _pollGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            AppSettings settings = _settings();
             StatusReport previous = Current;
             Dictionary<string, ProviderSnapshot> previousById = previous.Providers
                 .GroupBy(snapshot => snapshot.Id, StringComparer.Ordinal)
@@ -76,7 +75,6 @@ public sealed class StatusPoller : IActivityCadencePoller
                 .Select(provider => PrepareProviderAttemptAsync(
                     provider,
                     previousById.GetValueOrDefault(provider.Id),
-                    IsEnabled(settings, provider.Id),
                     cancellationToken))
                 .ToArray();
 
@@ -193,38 +191,11 @@ public sealed class StatusPoller : IActivityCadencePoller
         }
     }
 
-    private static bool IsEnabled(AppSettings settings, string providerId) =>
-        !settings.Providers.TryGetValue(providerId, out ProviderSettings? providerSettings)
-        || providerSettings.Enabled;
-
-    private ProviderSnapshot CreateDisabledSnapshot(IStatusProvider provider)
-    {
-        _cooldowns.TryRemove(provider.Id, out _);
-        _retentionScopes.TryRemove(provider.Id, out _);
-        _log.Write(LogArea.Provider, LogOutcome.Disabled);
-        return new ProviderSnapshot(
-            provider.Id,
-            provider.Label,
-            HealthState.Disabled,
-            null,
-            ImmutableArray<UsageWindow>.Empty,
-            ImmutableArray<InfoLine>.Empty,
-            null,
-            _timeProvider.GetUtcNow(),
-            0);
-    }
-
     private async Task<ProviderAttempt> PrepareProviderAttemptAsync(
         IStatusProvider provider,
         ProviderSnapshot? previous,
-        bool enabled,
         CancellationToken cancellationToken)
     {
-        if (!enabled)
-        {
-            return new ProviderAttempt(provider, previous, ProviderAttemptKind.Disabled);
-        }
-
         if (_cooldowns.TryGetValue(provider.Id, out DateTimeOffset cooldownUntil) &&
             cooldownUntil > _timeProvider.GetUtcNow())
         {
@@ -359,11 +330,6 @@ public sealed class StatusPoller : IActivityCadencePoller
 
     private ProviderSnapshot ApplyAttempt(ProviderAttempt attempt)
     {
-        if (attempt.Kind == ProviderAttemptKind.Disabled)
-        {
-            return CreateDisabledSnapshot(attempt.Provider);
-        }
-
         if (attempt.Kind == ProviderAttemptKind.CoolingDown)
         {
             return RetainCooldown(attempt.Provider, attempt.Previous);
@@ -738,7 +704,6 @@ public sealed class StatusPoller : IActivityCadencePoller
     private enum ProviderAttemptKind
     {
         Completed,
-        Disabled,
         CoolingDown,
         TimedOut,
         Failed,
