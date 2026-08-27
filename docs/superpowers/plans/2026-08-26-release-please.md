@@ -132,8 +132,8 @@ git commit -m "ci(pr): validate conventional titles" -m "Created with Codex"
 - Create: `.github/workflows/release-please.yml`
 
 **Interfaces:**
-- Consumes: Release Please config and manifest, action outputs `release_created`, `tag_name`, `version`, and `sha`, or a manually supplied recovery tag
-- Produces: a published GitHub Release containing exactly the versioned Windows ZIP and SHA256 checksum
+- Consumes: Release Please config and manifest, action outputs `release_created`, `tag_name`, `version`, `sha`, and `prs`, or a manually supplied recovery tag
+- Produces: required checks for the generated release pull request and a published GitHub Release containing exactly the versioned Windows ZIP and SHA256 checksum
 
 - [ ] **Step 1: Define the failure cases before implementation**
 
@@ -148,8 +148,13 @@ Create push-to-`master` and recovery `workflow_dispatch` triggers plus one
 non-canceling concurrency group. On pushes, run
 `googleapis/release-please-action` pinned to
 `45996ed1f6d02564a971a2fa1b5860e934307cf7` (`v5.0.0`) with explicit target
-branch `master`. Grant only `contents: write`, `pull-requests: write`, and
-`issues: write` to the job.
+branch `master`. Grant `contents: write`, `pull-requests: write`, and
+`issues: write` for release management, plus `actions: write` and
+`checks: write` for generated release pull request checks. When Release Please
+creates or updates its pull request, verify the expected repository, branches,
+Conventional Commit title, body, and generated file allowlist. Create the
+trusted title check for its head SHA and dispatch `build.yml` on the release
+branch. This small integration guard does not calculate a version or changelog.
 
 On recovery, check out `master`, require the input tag to equal `v` plus the
 root manifest version, require the GitHub Release to be a draft, and resolve the
@@ -214,12 +219,13 @@ git commit -m "ci(release): publish verified windows artifacts" -m "Created with
 - [ ] **Step 1: Write the release-process documentation**
 
 Document Conventional Commit version rules, squash behavior, release pull
-request approval, bot-created workflow approval behavior, Windows artifact and
+request approval, bot-created workflow dispatch behavior, Windows artifact and
 checksum formats, manual acceptance before approving the protected release
 environment named `release`, draft recovery, immutable releases, the required
 release immutability setting, and all other GitHub settings. State that
-a PAT is unnecessary for normal publication and that a GitHub App or token is
-optional only for unattended extra workflows. Explain independence from pull
+a PAT is unnecessary for normal publication and required checks and that a
+GitHub App or token is optional only for unattended automatic pull request
+events. Explain independence from pull
 request #4's older design.
 
 - [ ] **Step 2: Link the document from README**

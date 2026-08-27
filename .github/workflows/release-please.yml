@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write
+      checks: write
       contents: write
       issues: write
       pull-requests: write
@@ -40,6 +42,75 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target-branch: master
+
+      - name: Queue checks for the Release Please pull request
+        if: >-
+          github.event_name == 'push' &&
+          steps.release.outputs.prs_created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          set -euo pipefail
+
+          if ! jq -e 'length == 1' <<<"${RELEASE_PRS}" >/dev/null; then
+            echo 'Expected exactly one Release Please pull request.' >&2
+            exit 1
+          fi
+
+          pr_number="$(jq -er '.[0].number' <<<"${RELEASE_PRS}")"
+          expected_branch="$(jq -er '.[0].headBranchName' <<<"${RELEASE_PRS}")"
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"
+          title="$(jq -r '.title' <<<"${pr_json}")"
+          body="$(jq -r '.body // ""' <<<"${pr_json}")"
+          head_branch="$(jq -r '.head.ref' <<<"${pr_json}")"
+          head_sha="$(jq -r '.head.sha' <<<"${pr_json}")"
+
+          if [[ "$(jq -r '.base.ref' <<<"${pr_json}")" != 'master' ||
+                "$(jq -r '.head.repo.full_name' <<<"${pr_json}")" != "${GITHUB_REPOSITORY}" ||
+                "${head_branch}" != "${expected_branch}" ]]; then
+            echo 'Release Please pull request targets an unexpected repository or branch.' >&2
+            exit 1
+          fi
+
+          if [[ ! "${title}" =~ ^chore\(release\):\ release\ [0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected Release Please pull request title: ${title}" >&2
+            exit 1
+          fi
+
+          if grep -Eiq '(Release-As:|BEGIN_COMMIT_OVERRIDE|END_COMMIT_OVERRIDE)' <<<"${body}"; then
+            echo 'Release Please pull request body contains a control marker.' >&2
+            exit 1
+          fi
+
+          actual_files="$({
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" \
+              --jq '.[].filename'
+          } | sort)"
+          expected_files="$(printf '%s\n' \
+            '.release-please-manifest.json' \
+            'CHANGELOG.md' \
+            'version.txt' | sort)"
+          if [[ "${actual_files}" != "${expected_files}" ]]; then
+            echo 'Release Please pull request contains unexpected files.' >&2
+            printf '%s\n' "${actual_files}" >&2
+            exit 1
+          fi
+
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Validate PR title' \
+            -f head_sha="${head_sha}" \
+            -f status='completed' \
+            -f conclusion='success' \
+            -f 'output[title]=Release pull request metadata is valid' \
+            -f 'output[summary]=Release Please generated the expected Conventional Commit title, body, and files.' \
+            >/dev/null
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/dispatches" \
+            -f ref="${head_branch}"
 
       - name: Check out master for recovery
         if: github.event_name == 'workflow_dispatch'

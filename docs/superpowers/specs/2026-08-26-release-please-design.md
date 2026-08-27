@@ -82,11 +82,17 @@ an in-progress release.
 ### Release Management Job
 
 An Ubuntu job runs the commit-SHA-pinned `googleapis/release-please-action` v5
-with job-scoped `contents: write`, `pull-requests: write`, and `issues: write`
-permissions. Normal pushes explicitly target `master`.
+with job-scoped `actions: write`, `checks: write`, `contents: write`,
+`pull-requests: write`, and `issues: write` permissions. Normal pushes
+explicitly target `master`.
 
 For feature and maintenance pushes, Release Please creates or updates the
-release pull request. No publication jobs run.
+release pull request. The trusted job verifies that the pull request has the
+expected Conventional Commit title, body, repository branches, and three
+generated files. It creates the required title check on the pull request SHA
+and dispatches the normal build workflow on the release branch. The dispatch
+is a documented `GITHUB_TOKEN` exception, so no personal token is needed. No
+publication jobs run.
 
 After a maintainer merges the release pull request, Release Please creates a
 `vMAJOR.MINOR.PATCH` tag and a draft GitHub Release. Draft release creation and
@@ -180,17 +186,20 @@ The following settings are prerequisites and are documented as manual setup:
    maintainer.
 7. Enable repository release immutability before the first publication.
 
-Bot-created Release Please pull request workflow runs may require maintainer
-approval under GitHub's current token policy. The documentation explains this
-instead of requiring a personal access token. A GitHub App or fine-grained token
-is optional only if maintainers later want unattended execution of additional
-workflows on bot-created pull requests.
+Bot-created Release Please pull request events can produce approval-required
+runs under GitHub's current token policy. The trusted release workflow creates
+the title check and uses `workflow_dispatch` for the required build instead of
+requiring a personal access token. A duplicate approval-required run can remain
+unapproved. A GitHub App or fine-grained token is optional only if maintainers
+later want every automatic pull request event to run unattended.
 
 ## Security and Failure Handling
 
 - Third-party actions are pinned to full commit SHAs.
 - Pull request title validation never checks out untrusted code.
 - The default `GITHUB_TOKEN` is used with job-scoped permissions.
+- Release pull request checks run only after the trusted workflow verifies the
+  repository, branches, generated file allowlist, title, and body.
 - No credentials, responses, or runtime data enter release artifacts.
 - A release remains a draft until the exact Windows candidate is verified.
 - Published tags and releases are immutable. Corrections use a new patch
