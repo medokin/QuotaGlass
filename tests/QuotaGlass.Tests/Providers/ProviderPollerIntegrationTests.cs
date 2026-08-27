@@ -558,11 +558,23 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
     {
         // Break caught: a completed rate-limit response mutates scheduler state before poll cancellation commits.
         int request = 0;
-        var handler = new StubHttpMessageHandler(_ => Interlocked.Increment(ref request) switch
+        var firstCodexRequestCompleted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(_ =>
         {
-            1 => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
-            2 => JsonResponse(ReadFixture("codex-wham.json")),
-            _ => throw new InvalidOperationException("Unexpected HTTP request."),
+            int currentRequest = Interlocked.Increment(ref request);
+            HttpResponseMessage response = currentRequest switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
+                2 => JsonResponse(ReadFixture("codex-wham.json")),
+                _ => throw new InvalidOperationException("Unexpected HTTP request."),
+            };
+            if (currentRequest == 1)
+            {
+                firstCodexRequestCompleted.TrySetResult();
+            }
+
+            return response;
         });
         string credentialPath = _directory.WriteFile(
             "codex-cancel-auth.json",
@@ -575,7 +587,9 @@ public sealed class ProviderPollerIntegrationTests : IDisposable
         using var cancellation = new CancellationTokenSource();
 
         Task<StatusReport> canceledPoll = poller.PollOnceAsync(cancellation.Token);
-        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await Task.WhenAll(
+            blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(1)),
+            firstCodexRequestCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1)));
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledPoll);
         blocking.CompleteOk();
