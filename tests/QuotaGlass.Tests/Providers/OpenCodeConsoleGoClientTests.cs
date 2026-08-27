@@ -129,6 +129,61 @@ public sealed class OpenCodeConsoleGoClientTests
     }
 
     [Fact]
+    public async Task FetchAsync_StaleAccountDoesNotHideValidAccount()
+    {
+        // Catches one revoked account aborting discovery before another account is checked.
+        var stale = new OpenCodeConsoleAccount("account-stale", "access-stale", null);
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.Headers.Authorization?.Parameter == "access-stale")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
+            return request.RequestUri?.AbsolutePath.EndsWith("/orgs", StringComparison.Ordinal) == true
+                ? JsonResponse("[{\"id\":\"org-test\"}]")
+                : JsonResponse(ValidStatus);
+        });
+        var client = new OpenCodeConsoleGoClient(handler, SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync(
+            [stale, Account],
+            CancellationToken.None);
+
+        Assert.Equal(OpenCodeConsoleFetchOutcome.Success, result.Outcome);
+        Assert.Single(result.Workspaces);
+        Assert.Equal(3, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ConfiguredSelectorSkipsUnselectedStatusRequests()
+    {
+        // Catches explicit selection still probing every organization on every poll.
+        string selected = Selector(Account.AccountId, "org-selected");
+        string? requestedOrganization = null;
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.RequestUri?.AbsolutePath.EndsWith("/orgs", StringComparison.Ordinal) == true)
+            {
+                return JsonResponse("[{\"id\":\"org-other\"},{\"id\":\"org-selected\"}]");
+            }
+
+            requestedOrganization = Assert.Single(request.Headers.GetValues("x-org-id"));
+            return JsonResponse(ValidStatus);
+        });
+        var client = new OpenCodeConsoleGoClient(handler, SeverityFromPercent);
+
+        OpenCodeConsoleFetchResult result = await client.FetchAsync(
+            [Account],
+            CancellationToken.None,
+            selected);
+
+        Assert.Single(result.Workspaces);
+        Assert.Equal("org-selected", requestedOrganization);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task FetchAsync_MissingPrivateRouteReturnsTransientFailure()
     {
         var client = new OpenCodeConsoleGoClient(

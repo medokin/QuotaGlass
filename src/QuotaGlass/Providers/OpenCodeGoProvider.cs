@@ -211,11 +211,11 @@ public sealed class OpenCodeGoProvider : IStatusProvider
             .ToImmutableArray();
         if (current.IsEmpty)
         {
-            return AuthenticationRequired(fetchedAt);
+            return ConsoleAuthenticationRequired(fetchedAt);
         }
 
         OpenCodeConsoleFetchResult result = await _consoleClient
-            .FetchAsync(current, cancellationToken)
+            .FetchAsync(current, cancellationToken, settings.WorkspaceSelector)
             .ConfigureAwait(false);
         if (result.Outcome != OpenCodeConsoleFetchOutcome.Success)
         {
@@ -224,7 +224,9 @@ public sealed class OpenCodeGoProvider : IStatusProvider
 
         if (result.Workspaces.IsEmpty)
         {
-            return NotConfigured(fetchedAt);
+            return settings.WorkspaceSelector is null
+                ? NotConfigured(fetchedAt)
+                : SelectionRequired([], fetchedAt);
         }
 
         OpenCodeConsoleWorkspace? selected;
@@ -256,7 +258,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider
         OpenCodeConsoleFetchResult result,
         DateTimeOffset fetchedAt) => result.Outcome switch
         {
-            OpenCodeConsoleFetchOutcome.AuthenticationRequired => AuthenticationRequired(
+            OpenCodeConsoleFetchOutcome.AuthenticationRequired => ConsoleAuthenticationRequired(
                 fetchedAt,
                 result.StatusCode),
             OpenCodeConsoleFetchOutcome.RateLimited => new ProviderFetchResult(
@@ -271,24 +273,36 @@ public sealed class OpenCodeGoProvider : IStatusProvider
                 statusCode: result.StatusCode),
         };
 
-    private static ProviderFetchResult AuthenticationRequired(
+    private static ProviderFetchResult ConsoleAuthenticationRequired(
         DateTimeOffset fetchedAt,
         HttpStatusCode? statusCode = null) => new(
         ProviderFetchOutcome.AuthenticationRequired,
-        Snapshot(HealthState.AuthExpired, [], "re-auth: run opencode auth login", fetchedAt),
+        Snapshot(HealthState.AuthExpired, [], "re-auth: run opencode console login", fetchedAt),
         statusCode);
 
     private static ProviderFetchResult SelectionRequired(
         ImmutableArray<OpenCodeConsoleWorkspace> workspaces,
         DateTimeOffset fetchedAt)
     {
+        const string settingPath = "Providers.opencode-go.OpenCodeConsole.WorkspaceSelector";
+        if (workspaces.IsEmpty)
+        {
+            return new ProviderFetchResult(
+                ProviderFetchOutcome.NotConfigured,
+                Snapshot(
+                    HealthState.Unreachable,
+                    [],
+                    $"configured {settingPath} is not available",
+                    fetchedAt));
+        }
+
         string selectors = string.Join(", ", workspaces.Select(workspace => workspace.Selector));
         return new ProviderFetchResult(
             ProviderFetchOutcome.NotConfigured,
             Snapshot(
                 HealthState.Unreachable,
                 [],
-                $"set providers.opencode-go.openCodeConsole.workspaceSelector to one of: {selectors}",
+                $"set {settingPath} to one of: {selectors}",
                 fetchedAt));
     }
 

@@ -35,7 +35,8 @@ internal interface IOpenCodeConsoleGoClient
 {
     Task<OpenCodeConsoleFetchResult> FetchAsync(
         ImmutableArray<OpenCodeConsoleAccount> accounts,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? workspaceSelector = null);
 }
 
 internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
@@ -60,9 +61,11 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
 
     public async Task<OpenCodeConsoleFetchResult> FetchAsync(
         ImmutableArray<OpenCodeConsoleAccount> accounts,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? workspaceSelector = null)
     {
         var workspaces = ImmutableArray.CreateBuilder<OpenCodeConsoleWorkspace>();
+        OpenCodeConsoleFetchResult? failure = null;
         using var client = new HttpClient(_handler, disposeHandler: false);
 
         foreach (OpenCodeConsoleAccount account in accounts)
@@ -75,7 +78,8 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
                 cancellationToken).ConfigureAwait(false);
             if (organizations.Failure is not null)
             {
-                return organizations.Failure;
+                failure ??= organizations.Failure;
+                continue;
             }
 
             using JsonDocument organizationDocument = organizations.Document!;
@@ -83,11 +87,19 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
                 organizationDocument.RootElement,
                 out ImmutableArray<string> organizationIds))
             {
-                return InvalidResponse();
+                failure ??= InvalidResponse();
+                continue;
             }
 
-            foreach (string organizationId in organizationIds)
+            foreach (string organizationId in organizationIds.Order(StringComparer.Ordinal))
             {
+                string selector = CreateSelector(account.AccountId, organizationId);
+                if (workspaceSelector is not null &&
+                    !string.Equals(selector, workspaceSelector, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 HttpJsonResult status = await GetJsonAsync(
                     client,
                     GoStatusUri,
@@ -96,27 +108,33 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
                     cancellationToken).ConfigureAwait(false);
                 if (status.Failure is not null)
                 {
-                    return status.Failure;
+                    failure ??= status.Failure;
+                    continue;
                 }
 
                 using JsonDocument statusDocument = status.Document!;
                 if (!TryReadWorkspace(statusDocument.RootElement, out ImmutableArray<UsageWindow> windows))
                 {
-                    return InvalidResponse();
+                    failure ??= InvalidResponse();
+                    continue;
                 }
 
                 if (!windows.IsEmpty)
                 {
-                    workspaces.Add(new OpenCodeConsoleWorkspace(
-                        CreateSelector(account.AccountId, organizationId),
-                        windows));
+                    var workspace = new OpenCodeConsoleWorkspace(selector, windows);
+                    if (workspaceSelector is not null)
+                    {
+                        return Success([workspace]);
+                    }
+
+                    workspaces.Add(workspace);
                 }
             }
         }
 
-        return new OpenCodeConsoleFetchResult(
-            OpenCodeConsoleFetchOutcome.Success,
-            workspaces.ToImmutable());
+        return workspaces.Count > 0
+            ? Success(workspaces.ToImmutable())
+            : failure ?? Success([]);
     }
 
     private async Task<HttpJsonResult> GetJsonAsync(
@@ -356,6 +374,11 @@ internal sealed class OpenCodeConsoleGoClient : IOpenCodeConsoleGoClient
         OpenCodeConsoleFetchOutcome.InvalidResponse,
         [],
         statusCode);
+
+    private static OpenCodeConsoleFetchResult Success(
+        ImmutableArray<OpenCodeConsoleWorkspace> workspaces) => new(
+        OpenCodeConsoleFetchOutcome.Success,
+        workspaces);
 
     private sealed record HttpJsonResult(
         JsonDocument? Document,

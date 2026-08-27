@@ -359,6 +359,10 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
         ProviderSnapshot selectionRequired = Assert.IsType<ProviderSnapshot>(unselected.Snapshot);
         Assert.Equal(ProviderFetchOutcome.NotConfigured, unselected.Outcome);
+        Assert.Contains(
+            "Providers.opencode-go.OpenCodeConsole.WorkspaceSelector",
+            selectionRequired.Error,
+            StringComparison.Ordinal);
         Assert.Contains(first.Selector, selectionRequired.Error, StringComparison.Ordinal);
         Assert.Contains(second.Selector, selectionRequired.Error, StringComparison.Ordinal);
         Assert.Equal(second.Windows, Assert.IsType<ProviderSnapshot>(selected.Snapshot).Windows);
@@ -381,7 +385,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
         Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
-        Assert.Equal("re-auth: run opencode auth login", snapshot.Error);
+        Assert.Equal("re-auth: run opencode console login", snapshot.Error);
     }
 
     [Fact]
@@ -531,7 +535,8 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     {
         public Task<OpenCodeConsoleFetchResult> FetchAsync(
             ImmutableArray<OpenCodeConsoleAccount> accounts,
-            CancellationToken cancellationToken) => Task.FromResult(fetch());
+            CancellationToken cancellationToken,
+            string? workspaceSelector = null) => Task.FromResult(fetch());
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

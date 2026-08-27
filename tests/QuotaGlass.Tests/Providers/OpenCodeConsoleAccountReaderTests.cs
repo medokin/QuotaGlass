@@ -30,6 +30,10 @@ public sealed class OpenCodeConsoleAccountReaderTests
         Assert.DoesNotContain("email", capturedQuery, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("refresh_token", capturedQuery, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("active_org_id", capturedQuery, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "where a.url = 'https://opencode.ai/console'",
+            capturedQuery,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -22,7 +22,8 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
     private const string ConsoleUrl = "https://opencode.ai/console";
     private const string AccountQuery =
         "select a.id, a.url, a.access_token, a.token_expiry " +
-        "from account a order by a.id limit 33;";
+        "from account a where a.url = 'https://opencode.ai/console' " +
+        "order by a.id limit 33;";
 
     private readonly Func<string, CancellationToken, Task<byte[]?>> _runQuery;
 
@@ -171,18 +172,25 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
         }
 
         Task<byte[]> stdout = ReadBoundedAsync(process.StandardOutput.BaseStream, cancellationToken);
-        Task stderr = process.StandardError.BaseStream.CopyToAsync(Stream.Null, cancellationToken);
+        Task stderr = DrainBoundedAsync(process.StandardError.BaseStream, cancellationToken);
+        Task exit = process.WaitForExitAsync(cancellationToken);
 
         try
         {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            byte[] output = await stdout.ConfigureAwait(false);
-            await stderr.ConfigureAwait(false);
-            return process.ExitCode == 0 ? output : null;
+            var pending = new List<Task> { stdout, stderr, exit };
+            while (pending.Count > 0)
+            {
+                Task completed = await Task.WhenAny(pending).ConfigureAwait(false);
+                await completed.ConfigureAwait(false);
+                pending.Remove(completed);
+            }
+
+            return process.ExitCode == 0 ? stdout.Result : null;
         }
         catch
         {
             TryKill(process);
+            await ObserveCleanupAsync(process, stdout, stderr).ConfigureAwait(false);
             throw;
         }
     }
@@ -193,7 +201,6 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
     {
         using var output = new MemoryStream();
         byte[] buffer = new byte[81920];
-        bool oversized = false;
         while (true)
         {
             int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
@@ -202,18 +209,75 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
                 break;
             }
 
-            if (!oversized && output.Length + read <= ProviderHttpSafety.MaximumJsonBytes)
+            if (output.Length + read <= ProviderHttpSafety.MaximumJsonBytes)
             {
                 await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken)
                     .ConfigureAwait(false);
             }
             else
             {
-                oversized = true;
+                throw InvalidOutput();
             }
         }
 
-        return oversized ? throw InvalidOutput() : output.ToArray();
+        return output.ToArray();
+    }
+
+    private static async Task DrainBoundedAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[81920];
+        int total = 0;
+        while (true)
+        {
+            int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return;
+            }
+
+            total = checked(total + read);
+            if (total > ProviderHttpSafety.MaximumJsonBytes)
+            {
+                throw InvalidOutput();
+            }
+        }
+    }
+
+    private static async Task ObserveCleanupAsync(
+        Process process,
+        Task stdout,
+        Task stderr)
+    {
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or TimeoutException)
+        {
+        }
+
+        await ObserveAsync(stdout).ConfigureAwait(false);
+        await ObserveAsync(stderr).ConfigureAwait(false);
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is
+            OperationCanceledException or
+            InvalidDataException or
+            IOException or
+            InvalidOperationException or
+            TimeoutException)
+        {
+        }
     }
 
     private static void TryKill(Process process)
@@ -225,7 +289,7 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
                 process.Kill(entireProcessTree: true);
             }
         }
-        catch (InvalidOperationException)
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
         }
     }
