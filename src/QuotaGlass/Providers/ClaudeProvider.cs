@@ -21,6 +21,7 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
     private readonly Func<string, bool> _credentialProbe;
+    private readonly Func<CancellationToken, Task<bool>> _refreshCredential;
     private DateTimeOffset _profileCachedAt;
     private string? _cachedPlanLabel;
 
@@ -29,7 +30,14 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
         HttpMessageHandler handler,
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider = null)
-        : this(credentialPath, handler, severityFromPercent, timeProvider, OpenCredentialStream)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            ClaudeCredentialRefresher.RefreshAsync)
     {
     }
 
@@ -45,7 +53,8 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
             severityFromPercent,
             timeProvider,
             openCredential,
-            CredentialFilePrerequisite.Probe)
+            CredentialFilePrerequisite.Probe,
+            _ => Task.FromResult(false))
     {
     }
 
@@ -56,6 +65,25 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
         Func<string, bool> credentialProbe)
+        : this(
+            credentialPath,
+            handler,
+            severityFromPercent,
+            timeProvider,
+            openCredential,
+            credentialProbe,
+            _ => Task.FromResult(false))
+    {
+    }
+
+    internal ClaudeProvider(
+        string credentialPath,
+        HttpMessageHandler handler,
+        Func<double?, Severity> severityFromPercent,
+        TimeProvider? timeProvider,
+        Func<string, Stream> openCredential,
+        Func<string, bool> credentialProbe,
+        Func<CancellationToken, Task<bool>> refreshCredential)
     {
         _credentialPath = credentialPath;
         _handler = handler;
@@ -63,6 +91,7 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
         _credentialProbe = credentialProbe;
+        _refreshCredential = refreshCredential;
     }
 
     public string Id => "claude";
@@ -84,23 +113,39 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
             bufferSize: 1,
             FileOptions.SequentialScan);
 
-    public async Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken)
+    public Task<ProviderFetchResult> FetchAsync(CancellationToken cancellationToken) =>
+        FetchAsync(allowRefresh: true, credential: null, cancellationToken);
+
+    private async Task<ProviderFetchResult> FetchAsync(
+        bool allowRefresh,
+        Credential? credential,
+        CancellationToken cancellationToken)
     {
         DateTimeOffset fetchedAt = _timeProvider.GetUtcNow();
-        Credential credential;
-        try
+        if (credential is null)
         {
-            credential = ReadCredential();
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return new ProviderFetchResult(
-                ProviderFetchOutcome.NotConfigured,
-                Snapshot(HealthState.Unreachable, null, [], [], null, fetchedAt));
+            try
+            {
+                credential = ReadCredential();
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return new ProviderFetchResult(
+                    ProviderFetchOutcome.NotConfigured,
+                    Snapshot(HealthState.Unreachable, null, [], [], null, fetchedAt));
+            }
         }
 
         if (credential.ExpiresAt <= fetchedAt)
         {
+            Credential? refreshed = allowRefresh
+                ? await TryRefreshCredentialAsync(credential, cancellationToken).ConfigureAwait(false)
+                : null;
+            if (refreshed is not null)
+            {
+                return await FetchAsync(allowRefresh: false, refreshed, cancellationToken).ConfigureAwait(false);
+            }
+
             return new ProviderFetchResult(
                 ProviderFetchOutcome.AuthenticationRequired,
                 Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt));
@@ -111,6 +156,15 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
             .ConfigureAwait(false);
         if (IsAuthExpired(usageResponse.StatusCode))
         {
+            Credential? refreshed = allowRefresh
+                ? await TryRefreshCredentialAsync(credential, cancellationToken).ConfigureAwait(false)
+                : null;
+            if (refreshed is not null)
+            {
+                usageResponse.Dispose();
+                return await FetchAsync(allowRefresh: false, refreshed, cancellationToken).ConfigureAwait(false);
+            }
+
             return new ProviderFetchResult(
                 ProviderFetchOutcome.AuthenticationRequired,
                 Snapshot(HealthState.AuthExpired, null, [], [], "re-auth: run claude login", fetchedAt),
@@ -153,6 +207,14 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
             .ConfigureAwait(false);
         if (profile.AuthExpired)
         {
+            Credential? refreshed = allowRefresh
+                ? await TryRefreshCredentialAsync(credential, cancellationToken).ConfigureAwait(false)
+                : null;
+            if (refreshed is not null)
+            {
+                return await FetchAsync(allowRefresh: false, refreshed, cancellationToken).ConfigureAwait(false);
+            }
+
             return new ProviderFetchResult(
                 ProviderFetchOutcome.AuthenticationRequired,
                 Snapshot(
@@ -189,6 +251,33 @@ public sealed class ClaudeProvider : IStatusProvider, IProviderAvailability
                 null,
                 fetchedAt),
             usageResponse.StatusCode);
+        }
+    }
+
+    private async Task<Credential?> TryRefreshCredentialAsync(
+        Credential previous,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await _refreshCredential(cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            Credential refreshed = ReadCredential();
+            return !string.Equals(refreshed.AccessToken, previous.AccessToken, StringComparison.Ordinal) &&
+                refreshed.ExpiresAt > _timeProvider.GetUtcNow()
+                    ? refreshed
+                    : null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

@@ -121,6 +121,114 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_ExpiredCredential_RefreshesAndUsesRotatedAccessToken()
+    {
+        // Break caught: a refreshable Claude session is reported as logged out when only its access token expired.
+        var now = new DateTimeOffset(2026, 8, 28, 7, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(now);
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("expired-access-token", now.AddMinutes(-1)));
+        var observedTokens = new List<string?>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            observedTokens.Add(request.Headers.Authorization?.Parameter);
+            return JsonResponse(
+                request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                    ? ReadFixture("claude-usage.json")
+                    : ReadFixture("claude-profile.json"));
+        });
+        int refreshCount = 0;
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            time,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                refreshCount++;
+                await File.WriteAllTextAsync(
+                    credentialPath,
+                    CreateCredentialJson("rotated-access-token", now.AddHours(8)),
+                    cancellationToken);
+                return true;
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.Success, result.Outcome);
+        Assert.Equal(HealthState.Ok, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(["rotated-access-token", "rotated-access-token"], observedTokens);
+    }
+
+    [Fact]
+    public async Task FetchAsync_RefreshFailure_PreservesAuthenticationRequiredResult()
+    {
+        // Break caught: a missing or failed Claude CLI converts a clear auth state into a provider exception.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("expired-access-token", DateTimeOffset.UtcNow.AddMinutes(-1)));
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            _ => throw new InvalidOperationException("Claude CLI failed"));
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+        ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
+
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(HealthState.AuthExpired, snapshot.Health);
+        Assert.Equal("re-auth: run claude login", snapshot.Error);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_RefreshCallerCancellation_Propagates()
+    {
+        // Break caught: provider timeout or shutdown cancellation is swallowed as an authentication warning.
+        var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("expired-access-token", DateTimeOffset.UtcNow.AddMinutes(-1)));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return true;
+            });
+        using var cancellation = new CancellationTokenSource();
+
+        Task<ProviderFetchResult> fetch = provider.FetchAsync(cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task FetchAsync_ExpiredCredentialSkipsTrailingRefreshToken()
     {
         // Catches a credential reader that continues into a protected refresh-token tail after required fields are complete.
@@ -343,6 +451,164 @@ public sealed class ClaudeProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_RejectedCredential_RefreshesAndRetriesOnce()
+    {
+        // Break caught: a server-invalidated access token bypasses the CLI refresh path because its local expiry is still future.
+        var now = new DateTimeOffset(2026, 8, 28, 7, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(now);
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("rejected-access-token", now.AddHours(1)));
+        var observedTokens = new List<string?>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            string? token = request.Headers.Authorization?.Parameter;
+            observedTokens.Add(token);
+            if (token == "rejected-access-token")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            }
+
+            return JsonResponse(
+                request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                    ? ReadFixture("claude-usage.json")
+                    : ReadFixture("claude-profile.json"));
+        });
+        int refreshCount = 0;
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            time,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                refreshCount++;
+                await File.WriteAllTextAsync(
+                    credentialPath,
+                    CreateCredentialJson("rotated-access-token", now.AddHours(8)),
+                    cancellationToken);
+                return true;
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.Success, result.Outcome);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(
+            ["rejected-access-token", "rotated-access-token", "rotated-access-token"],
+            observedTokens);
+    }
+
+    [Fact]
+    public async Task FetchAsync_RotatedCredentialIsAlsoRejected_DoesNotRefreshOrRetryAgain()
+    {
+        // Break caught: the single retry can recursively refresh and make a third API request.
+        var now = new DateTimeOffset(2026, 8, 28, 7, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(now);
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        int refreshCount = 0;
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("rejected-access-token", now.AddHours(1)));
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            time,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                refreshCount++;
+                await File.WriteAllTextAsync(
+                    credentialPath,
+                    CreateCredentialJson("rotated-access-token", now.AddHours(8)),
+                    cancellationToken);
+                return true;
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_UnchangedRejectedCredential_IsNotRetried()
+    {
+        // Break caught: a successful CLI exit without token rotation resends the same rejected token.
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        int refreshCount = 0;
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("rejected-access-token", DateTimeOffset.UtcNow.AddHours(1)));
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            _ =>
+            {
+                refreshCount++;
+                return Task.FromResult(true);
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task FetchAsync_RefreshOnlyExtendsRejectedCredentialExpiry_DoesNotRetry()
+    {
+        // Break caught: expiry metadata changes cause the same rejected access token to be resent.
+        var now = new DateTimeOffset(2026, 8, 28, 7, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(now);
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        int refreshCount = 0;
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("rejected-access-token", now.AddHours(1)));
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            time,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                refreshCount++;
+                await File.WriteAllTextAsync(
+                    credentialPath,
+                    CreateCredentialJson("rejected-access-token", now.AddHours(8)),
+                    cancellationToken);
+                return true;
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task FetchAsync_CachesProfileForOneHour()
     {
         // Catches a provider that loads the immutable plan profile on every usage poll.
@@ -384,6 +650,65 @@ public sealed class ClaudeProviderTests : IDisposable
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         AssertUsageAndSpendPreserved(snapshot);
         Assert.Equal("re-auth: run claude login", snapshot.Error);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ProfileRejectsCredential_RefreshesAndRetriesOnce()
+    {
+        // Break caught: authentication rejection from the profile endpoint does not use the refresh path.
+        var now = new DateTimeOffset(2026, 8, 28, 7, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(now);
+        var directory = new TemporaryDirectory();
+        _directories.Add(directory);
+        string credentialPath = directory.WriteFile(
+            "credentials.json",
+            CreateCredentialJson("rejected-access-token", now.AddHours(1)));
+        var observedTokens = new List<string?>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            string? token = request.Headers.Authorization?.Parameter;
+            observedTokens.Add(token);
+            if (token == "rejected-access-token" &&
+                request.RequestUri!.AbsolutePath.EndsWith("profile", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+
+            return JsonResponse(
+                request.RequestUri!.AbsolutePath.EndsWith("usage", StringComparison.Ordinal)
+                    ? ReadFixture("claude-usage.json")
+                    : ReadFixture("claude-profile.json"));
+        });
+        int refreshCount = 0;
+        var provider = new ClaudeProvider(
+            credentialPath,
+            handler,
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            time,
+            ClaudeProvider.OpenCredentialStream,
+            CredentialFilePrerequisite.Probe,
+            async cancellationToken =>
+            {
+                refreshCount++;
+                await File.WriteAllTextAsync(
+                    credentialPath,
+                    CreateCredentialJson("rotated-access-token", now.AddHours(8)),
+                    cancellationToken);
+                return true;
+            });
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.Success, result.Outcome);
+        Assert.Equal(1, refreshCount);
+        Assert.Equal(
+            [
+                "rejected-access-token",
+                "rejected-access-token",
+                "rotated-access-token",
+                "rotated-access-token"
+            ],
+            observedTokens);
     }
 
     [Fact]
@@ -597,22 +922,19 @@ public sealed class ClaudeProviderTests : IDisposable
     {
         var directory = new TemporaryDirectory();
         _directories.Add(directory);
+        long expiresAt = expiresAtUnixMilliseconds ?? DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds();
         string credentialPath = directory.WriteFile(
             "credentials.json",
-            JsonSerializer.Serialize(new
-            {
-                claudeAiOauth = new
-                {
-                    accessToken = "unit-test-access-token",
-                    expiresAt = expiresAtUnixMilliseconds ?? DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds()
-                }
-            }));
+            CreateCredentialJson(
+                "unit-test-access-token",
+                DateTimeOffset.FromUnixTimeMilliseconds(expiresAt)));
 
         return new ClaudeProvider(
             credentialPath,
             handler,
             severityFromPercent ?? (percent => SeverityPolicy.FromPercent(percent, 80, 95)),
-            timeProvider);
+            timeProvider,
+            ClaudeProvider.OpenCredentialStream);
     }
 
     private ClaudeProvider CreateProviderWithCredential(HttpMessageHandler handler, string credentialJson)
@@ -622,7 +944,9 @@ public sealed class ClaudeProviderTests : IDisposable
         return new ClaudeProvider(
             directory.WriteFile("credentials.json", credentialJson),
             handler,
-            percent => SeverityPolicy.FromPercent(percent, 80, 95));
+            percent => SeverityPolicy.FromPercent(percent, 80, 95),
+            null,
+            ClaudeProvider.OpenCredentialStream);
     }
 
     private static ClaudeProvider CreateProviderWithCredentialStream(HttpMessageHandler handler, Stream credentialStream) =>
@@ -637,6 +961,16 @@ public sealed class ClaudeProviderTests : IDisposable
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
+
+    private static string CreateCredentialJson(string accessToken, DateTimeOffset expiresAt) =>
+        JsonSerializer.Serialize(new
+        {
+            claudeAiOauth = new
+            {
+                accessToken,
+                expiresAt = expiresAt.ToUnixTimeMilliseconds()
+            }
+        });
 
     private static void AssertUsageAndSpendPreserved(ProviderSnapshot snapshot)
     {
