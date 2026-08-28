@@ -31,7 +31,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
         Assert.Null(settings.Providers["opencode-go"].OpenCodeConsole);
         Assert.Equal(
-            ["claude", "codex", "ollama", "opencode-company-seat", "opencode-go"],
+            ["claude", "codex", "grok", "ollama", "opencode-company-seat", "opencode-go"],
             settings.Providers.Keys.OrderBy(providerId => providerId));
     }
 
@@ -75,6 +75,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Contains("codex", loaded.Providers.Keys);
         Assert.Contains("opencode-go", loaded.Providers.Keys);
         Assert.Contains("opencode-company-seat", loaded.Providers.Keys);
+        Assert.Contains("grok", loaded.Providers.Keys);
         Assert.Contains("ollama", loaded.Providers.Keys);
         Assert.Equal(
             new OpenCodeConsoleSettings(selector),
@@ -192,6 +193,23 @@ public sealed class SettingsStoreTests : IDisposable
         AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
 
         Assert.Contains("opencode-company-seat", loaded.Providers.Keys);
+        Assert.True(loaded.OverlayVisible);
+    }
+
+    [Fact]
+    public async Task LoadAsync_PreGrokSettingsAddsProvider()
+    {
+        // Catches a settings schema addition that leaves a compiled provider absent.
+        AppSettings previous = AppSettings.Default with
+        {
+            Providers = AppSettings.Default.Providers.Remove("grok"),
+            OverlayVisible = true,
+        };
+        await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(previous), CancellationToken.None);
+
+        AppSettings loaded = await _store.LoadAsync(CancellationToken.None);
+
+        Assert.Contains("grok", loaded.Providers.Keys);
         Assert.True(loaded.OverlayVisible);
     }
 

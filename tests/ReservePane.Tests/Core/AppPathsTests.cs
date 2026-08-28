@@ -17,5 +17,17 @@ public sealed class AppPathsTests
             Path.Combine(".local", "share", "opencode", "auth.json"),
             paths.OpenCodeAuthPath,
             StringComparison.OrdinalIgnoreCase);
+        string? grokHome = Environment.GetEnvironmentVariable("GROK_HOME");
+        if (string.IsNullOrWhiteSpace(grokHome))
+        {
+            Assert.EndsWith(
+                Path.Combine(".grok", "auth.json"),
+                paths.GrokAuthPath,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        else
+        {
+            Assert.Equal(Path.Combine(grokHome, "auth.json"), paths.GrokAuthPath);
+        }
     }
 }

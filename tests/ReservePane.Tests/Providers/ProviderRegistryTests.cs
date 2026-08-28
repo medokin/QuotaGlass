@@ -11,7 +11,7 @@ public sealed class ProviderRegistryTests : IDisposable
     private readonly TemporaryDirectory _directory = new();
 
     [Fact]
-    public void Create_ReturnsTheFiveCompiledProvidersInStableOrder()
+    public void Create_ReturnsTheSixCompiledProvidersInStableOrder()
     {
         AppSettings settings = AppSettings.Default;
 
@@ -23,6 +23,7 @@ public sealed class ProviderRegistryTests : IDisposable
             registry.Providers,
             provider => Assert.Equal("claude", provider.Id),
             provider => Assert.Equal("codex", provider.Id),
+            provider => Assert.Equal("grok", provider.Id),
             provider => Assert.Equal("opencode-go", provider.Id),
             provider =>
             {
@@ -47,8 +48,8 @@ public sealed class ProviderRegistryTests : IDisposable
             () => AppSettings.Default,
             CreatePaths());
 
-        Assert.Equal(5, registry.Handlers.Count);
-        Assert.Equal(5, registry.Handlers.Distinct().Count());
+        Assert.Equal(6, registry.Handlers.Count);
+        Assert.Equal(6, registry.Handlers.Distinct().Count());
         Assert.All(registry.Handlers, handler =>
         {
             Assert.Equal(
@@ -101,6 +102,7 @@ public sealed class ProviderRegistryTests : IDisposable
         Path.Combine(_directory.Path, "claude.json"),
         Path.Combine(_directory.Path, "codex.json"),
         Path.Combine(_directory.Path, "opencode.json"),
+        Path.Combine(_directory.Path, "grok.json"),
         Path.Combine(_directory.Path, "settings.json"),
         Path.Combine(_directory.Path, "log.txt"));
 }
