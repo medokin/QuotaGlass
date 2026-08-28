@@ -42,28 +42,6 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task IsAvailableAsync_ConsoleCommandAvailableWithoutSettings_ReturnsTrue()
-    {
-        // Catches automatic Console discovery being gated behind a persisted settings object.
-        var provider = new OpenCodeGoProvider(
-            "opencode-auth.json",
-            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
-            SeverityFromPercent,
-            null,
-            _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
-            () => null,
-            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
-            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
-            _ => false,
-            command => command == "opencode");
-
-        bool result = await ((IProviderAvailability)provider)
-            .IsAvailableAsync(CancellationToken.None);
-
-        Assert.True(result);
-    }
-
-    [Fact]
     public async Task IsAvailableAsync_CredentialSecurityFailureRemainsAvailable()
     {
         // Catches a credential security failure falling through to Console command discovery.
@@ -394,27 +372,6 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_NoApiKeyAndNoConsoleSettings_DiscoversConsoleUsage()
-    {
-        // Catches Console fetching returning NotConfigured unless an enable setting is persisted.
-        var workspace = new OpenCodeConsoleWorkspace(
-            new string('a', 64),
-            [new UsageWindow("rolling", 42, null, Severity.Normal)]);
-        OpenCodeGoProvider provider = CreateConsoleProvider(
-            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("API-key HTTP must not run")),
-            null,
-            new StubAccountReader(() => [ConsoleAccount()]),
-            new StubConsoleClient(() => new OpenCodeConsoleFetchResult(
-                OpenCodeConsoleFetchOutcome.Success,
-                [workspace])));
-
-        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
-
-        Assert.Equal(ProviderFetchOutcome.Success, result.Outcome);
-        Assert.Equal(workspace.Windows, Assert.IsType<ProviderSnapshot>(result.Snapshot).Windows);
-    }
-
-    [Fact]
     public async Task FetchAsync_NoApiKeyAndConsoleCommandUnavailable_ReturnsNotConfigured()
     {
         // Catches direct fetches invoking Console account discovery without its local prerequisite.
@@ -438,8 +395,9 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_ConsoleWithOneEligibleWorkspacePublishesUsage()
+    public async Task FetchAsync_NoApiKeyAndNoConsoleSettings_DiscoversOneWorkspaceUsage()
     {
+        // Catches automatic Console discovery requiring a persisted settings object.
         var workspace = new OpenCodeConsoleWorkspace(
             new string('a', 64),
             [new UsageWindow("rolling", 42, DateTimeOffset.Parse("2026-08-27T12:00:00Z"), Severity.Normal)]);
