@@ -17,6 +17,8 @@ public sealed class UiConstructionSmokeTests
         // Break caught: compiled XAML or a default constructor cannot create the three shared UI surfaces.
         Exception? failure = null;
         bool? popupShowActivated = null;
+        string? popupTitle = null;
+        string? overlayTitle = null;
         var thread = new Thread(() =>
         {
             try
@@ -25,6 +27,8 @@ public sealed class UiConstructionSmokeTests
                 var popup = new PopupWindow();
                 var overlay = new OverlayWindow();
                 popupShowActivated = popup.ShowActivated;
+                popupTitle = popup.Title;
+                overlayTitle = overlay.Title;
                 popup.Close();
                 overlay.Close();
             }
@@ -40,6 +44,8 @@ public sealed class UiConstructionSmokeTests
 
         Assert.Null(failure);
         Assert.True(popupShowActivated);
+        Assert.Equal("ReservePane", popupTitle);
+        Assert.Equal("ReservePane overlay", overlayTitle);
     }
 
     [Fact]

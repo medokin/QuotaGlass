@@ -16,12 +16,12 @@ public sealed class AutostartServiceTests
     public void IsEnabled_ReadsCurrentRunKeyValueEveryTime()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, @"C:\Program Files\QuotaGlass\QuotaGlass.exe");
+        var service = new AutostartService(runKey, @"C:\Program Files\ReservePane\ReservePane.exe");
 
         runKey.Value = null;
         Assert.False(service.IsEnabled);
 
-        runKey.Value = "\"C:\\Program Files\\QuotaGlass\\QuotaGlass.exe\"";
+        runKey.Value = "\"C:\\Program Files\\ReservePane\\ReservePane.exe\"";
         Assert.True(service.IsEnabled);
         Assert.Equal(2, runKey.GetValueCalls);
     }
@@ -30,34 +30,34 @@ public sealed class AutostartServiceTests
     public void SetEnabled_TrueWritesQuotedExecutablePathUnderApplicationValue()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, @"C:\Program Files\QuotaGlass\QuotaGlass.exe");
+        var service = new AutostartService(runKey, @"C:\Program Files\ReservePane\ReservePane.exe");
 
         service.SetEnabled(true);
 
-        Assert.Equal("QuotaGlass", runKey.SetName);
-        Assert.Equal("\"C:\\Program Files\\QuotaGlass\\QuotaGlass.exe\"", runKey.SetValueText);
+        Assert.Equal("ReservePane", runKey.SetName);
+        Assert.Equal("\"C:\\Program Files\\ReservePane\\ReservePane.exe\"", runKey.SetValueText);
     }
 
     [Fact]
     public void SetEnabled_TrueQuotesExecutablePathExactlyOnce()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, "\"C:\\Apps\\QuotaGlass.exe\"");
+        var service = new AutostartService(runKey, "\"C:\\Apps\\ReservePane.exe\"");
 
         service.SetEnabled(true);
 
-        Assert.Equal("\"C:\\Apps\\QuotaGlass.exe\"", runKey.SetValueText);
+        Assert.Equal("\"C:\\Apps\\ReservePane.exe\"", runKey.SetValueText);
     }
 
     [Fact]
     public void SetEnabled_FalseDeletesOnlyApplicationValue()
     {
         var runKey = new FakeRunKey();
-        var service = new AutostartService(runKey, @"C:\Apps\QuotaGlass.exe");
+        var service = new AutostartService(runKey, @"C:\Apps\ReservePane.exe");
 
         service.SetEnabled(false);
 
-        Assert.Equal("QuotaGlass", runKey.DeletedName);
+        Assert.Equal("ReservePane", runKey.DeletedName);
         Assert.Null(runKey.SetName);
     }
 
@@ -71,7 +71,7 @@ public sealed class AutostartServiceTests
 
         public string? GetValue(string name)
         {
-            Assert.Equal("QuotaGlass", name);
+            Assert.Equal("ReservePane", name);
             GetValueCalls++;
             return Value;
         }

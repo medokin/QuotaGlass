@@ -13,6 +13,14 @@ public sealed class TrayIconHostTests : IDisposable
     private readonly TemporaryDirectory _directory = new();
 
     [Fact]
+    public void WinFormsTrayIconView_InitialTooltipUsesReservePaneIdentity()
+    {
+        using var view = new WinFormsTrayIconView();
+
+        Assert.Equal("ReservePane", view.Tooltip);
+    }
+
+    [Fact]
     public void MenuDefinition_UsesExactItemsOrderAndCheckability()
     {
         Assert.Collection(

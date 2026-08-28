@@ -13,7 +13,7 @@ public sealed class AppManifestTests
     public void BuiltExecutable_ContainsApplicationIcon()
     {
         // Break caught: the branded icon is generated but not embedded in the Windows executable.
-        string executable = Path.Combine(AppContext.BaseDirectory, "QuotaGlass.exe");
+        string executable = Path.Combine(AppContext.BaseDirectory, "ReservePane.exe");
         Assert.True(File.Exists(executable), $"Application executable not found: {executable}");
         IntPtr module = NativeMethods.LoadLibraryEx(executable, IntPtr.Zero, LoadLibraryAsDataFile);
         Assert.NotEqual(IntPtr.Zero, module);
@@ -36,7 +36,7 @@ public sealed class AppManifestTests
     public void BuiltExecutable_DeclaresPerMonitorV2DpiAwareness()
     {
         // Break caught: placement assumes target-monitor DPI while Windows virtualizes the app at system DPI.
-        string executable = Path.Combine(AppContext.BaseDirectory, "QuotaGlass.exe");
+        string executable = Path.Combine(AppContext.BaseDirectory, "ReservePane.exe");
         Assert.True(File.Exists(executable), $"Application executable not found: {executable}");
         IntPtr module = NativeMethods.LoadLibraryEx(executable, IntPtr.Zero, LoadLibraryAsDataFile);
         Assert.NotEqual(IntPtr.Zero, module);

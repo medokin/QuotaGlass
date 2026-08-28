@@ -5,12 +5,24 @@ namespace QuotaGlass.Tests.Platform;
 public sealed class InstallerShutdownSignalTests
 {
     [Fact]
+    public void FromExecutablePath_UsesReservePaneSignalPrefix()
+    {
+        string signal = InstallerShutdownSignalName.FromExecutablePath(
+            @"C:\Users\tester\AppData\Local\Programs\ReservePane\ReservePane.exe");
+
+        Assert.StartsWith(
+            @"Local\ReservePane.InstallerShutdown.",
+            signal,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FromExecutablePath_DifferentInstallPathsUseDifferentSignals()
     {
         string first = InstallerShutdownSignalName.FromExecutablePath(
-            @"C:\Users\tester\AppData\Local\Programs\QuotaGlass\QuotaGlass.exe");
+            @"C:\Users\tester\AppData\Local\Programs\ReservePane\ReservePane.exe");
         string second = InstallerShutdownSignalName.FromExecutablePath(
-            @"D:\Portable\QuotaGlass.exe");
+            @"D:\Portable\ReservePane.exe");
 
         Assert.NotEqual(first, second);
     }
@@ -20,8 +32,8 @@ public sealed class InstallerShutdownSignalTests
     {
         string executablePath = Path.Combine(
             Path.GetTempPath(),
-            $"QuotaGlass-{Guid.NewGuid():N}",
-            "QuotaGlass.exe");
+            $"ReservePane-{Guid.NewGuid():N}",
+            "ReservePane.exe");
         var requested = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var signal = new InstallerShutdownSignal(
