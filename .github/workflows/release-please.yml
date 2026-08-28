@@ -55,6 +55,11 @@ jobs:
 
           release_branch='release-please--branches--master--components--ReservePane'
           if jq -e 'length == 1' <<<"${RELEASE_PRS:-[]}" >/dev/null; then
+            action_branch="$(jq -er '.[0].headBranchName' <<<"${RELEASE_PRS}")"
+            if [[ "${action_branch}" != "${release_branch}" ]]; then
+              echo "Release Please returned unexpected branch: ${action_branch}" >&2
+              exit 1
+            fi
             release_prs="${RELEASE_PRS}"
           else
             release_prs="$(

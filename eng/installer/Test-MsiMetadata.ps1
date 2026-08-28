@@ -144,7 +144,27 @@ try {
         'ProductCode must differ from the stable UpgradeCode.'
 
     $summary = $database.SummaryInformation(0)
+    Assert-Equal $summary.Property(3) 'ReservePane Windows x64 installer' 'Summary description'
     Assert-Equal $summary.Property(7) 'x64;1033' 'Summary template'
+
+    $icons = @(Get-MsiRows $database `
+        'SELECT `Name` FROM `Icon`' `
+        @('Id'))
+    Assert-Equal $icons.Count 1 'Icon count'
+    Assert-Equal $icons[0].Id 'ReservePaneIcon' 'Application icon id'
+
+    $binaries = @(Get-MsiRows $database `
+        'SELECT `Name` FROM `Binary`' `
+        @('Id'))
+    Assert-Equal $binaries.Count 1 'Binary count'
+    Assert-Equal $binaries[0].Id 'ReservePaneInstallerActions' 'Installer actions binary id'
+
+    $features = @(Get-MsiRows $database `
+        'SELECT `Feature`,`Title` FROM `Feature`' `
+        @('Id', 'Title'))
+    Assert-Equal $features.Count 1 'Feature count'
+    Assert-Equal $features[0].Id 'ReservePaneFeature' 'Application feature id'
+    Assert-Equal $features[0].Title 'ReservePane' 'Application feature title'
 
     $directories = @(Get-MsiRows $database `
         'SELECT `Directory`,`Directory_Parent`,`DefaultDir` FROM `Directory`' `
