@@ -77,6 +77,12 @@
                   Execute="immediate"
                   Impersonate="yes"
                   Return="check" />
+    <CustomAction Id="LaunchReservePane"
+                  FileRef="ReservePaneExecutable"
+                  ExeCommand=""
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="asyncNoWait" />
 
     <InstallExecuteSequence>
       <Custom Action="CloseInstalledReservePane"
@@ -85,6 +91,9 @@
       <Custom Action="AddReservePaneAutostartCleanup"
               Before="RemoveRegistryValues"
               Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="LaunchReservePane"
+              After="InstallFinalize"
+              Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND UILevel = 5" />
     </InstallExecuteSequence>
 
     <Feature Id="ReservePaneFeature" Title="ReservePane" Level="1">

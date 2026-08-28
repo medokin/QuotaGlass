@@ -43,8 +43,11 @@ configured or installed remain hidden.
 Download the versioned `.msi` from the GitHub Release and run it. The installer
 contains the required .NET runtime, installs for the current user without
 elevation under `%LOCALAPPDATA%\Programs\ReservePane`, and creates a Start Menu
-shortcut. It does not create a desktop shortcut or enable Start with Windows.
-Windows may show an unknown-publisher warning because the package is not signed.
+shortcut. After a successful fresh full-UI installation, ReservePane starts
+automatically. Silent or basic-UI installs, upgrades, and repairs do not start
+it. The installer does not create a desktop shortcut or enable Start with
+Windows. Windows may show an unknown-publisher warning because the package is
+not signed.
 
 ReservePane appears in Windows Apps & Features after installation. Uninstalling
 removes the application and shortcut while preserving settings and logs under

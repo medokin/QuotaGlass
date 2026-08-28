@@ -239,12 +239,13 @@ try {
     $customActions = @(Get-MsiRows $database `
         'SELECT `Action`,`Type`,`Source`,`Target` FROM `CustomAction`' `
         @('Action', 'Type', 'Source', 'Target'))
-    Assert-Equal $customActions.Count 3 'Custom action count'
+    Assert-Equal $customActions.Count 4 'Custom action count'
     Assert-Equal `
         @($customActions | Where-Object Action -notin @(
             'SetARPINSTALLLOCATION',
             'CloseInstalledReservePane',
-            'AddReservePaneAutostartCleanup')).Count `
+            'AddReservePaneAutostartCleanup',
+            'LaunchReservePane')).Count `
         0 `
         'Unexpected custom action count'
 
@@ -260,6 +261,15 @@ try {
     Assert-Equal $cleanupAction[0].Target 'AddReservePaneAutostartCleanup' 'Autostart cleanup entry point'
     Assert-True (([int] $cleanupAction[0].Type -band 0x400) -eq 0) 'Autostart cleanup must be immediate.'
     Assert-True (([int] $cleanupAction[0].Type -band 0x40) -eq 0) 'Autostart cleanup failures must be checked.'
+
+    $launchAction = @($customActions | Where-Object Action -eq 'LaunchReservePane')
+    Assert-Equal $launchAction.Count 1 'Launch application action count'
+    Assert-Equal $launchAction[0].Source 'ReservePaneExecutable' 'Launch application executable'
+    Assert-Equal $launchAction[0].Target '' 'Launch application arguments'
+    $installedExecutableType = 0x12
+    $asyncNoWaitFlags = 0xC0
+    $expectedLaunchActionType = $installedExecutableType -bor $asyncNoWaitFlags
+    Assert-Equal ([int] $launchAction[0].Type) $expectedLaunchActionType 'Launch application custom action type'
 
     $sequences = @(Get-MsiRows $database `
         'SELECT `Action`,`Condition`,`Sequence` FROM `InstallExecuteSequence`' `
@@ -287,6 +297,18 @@ try {
     Assert-True `
         ([int] $cleanupSequence[0].Sequence -lt [int] $removeRegistrySequence[0].Sequence) `
         'Autostart cleanup row must be added before RemoveRegistryValues.'
+
+    $launchSequence = @($sequences | Where-Object Action -eq 'LaunchReservePane')
+    $installFinalizeSequence = @($sequences | Where-Object Action -eq 'InstallFinalize')
+    Assert-Equal $launchSequence.Count 1 'Launch application sequence count'
+    Assert-Equal `
+        $launchSequence[0].Condition `
+        'NOT Installed AND NOT WIX_UPGRADE_DETECTED AND UILevel = 5' `
+        'Launch application condition'
+    Assert-Equal $installFinalizeSequence.Count 1 'InstallFinalize sequence count'
+    Assert-True `
+        ([int] $launchSequence[0].Sequence -gt [int] $installFinalizeSequence[0].Sequence) `
+        'Launch application must run only after installation is finalized.'
 
     $removeFolders = @(Get-MsiRows $database `
         'SELECT `FileKey`,`DirProperty`,`InstallMode` FROM `RemoveFile`' `
