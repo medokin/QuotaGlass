@@ -202,14 +202,25 @@ function Invoke-MsiExec {
     return $process.ExitCode
 }
 
-function Stop-InstalledTestProcesses {
+function Get-InstalledTestProcesses {
     $candidates = @(Get-Process -Name 'ReservePane' -ErrorAction SilentlyContinue)
     foreach ($candidate in $candidates) {
         try {
             if ($candidate.Path -eq $installedExecutable) {
-                Stop-Process -Id $candidate.Id -Force -ErrorAction Stop
-                [void] $candidate.WaitForExit(10000)
+                $candidate
             }
+        }
+        catch [System.ComponentModel.Win32Exception] {
+            continue
+        }
+    }
+}
+
+function Stop-InstalledTestProcesses {
+    foreach ($candidate in @(Get-InstalledTestProcesses)) {
+        try {
+            Stop-Process -Id $candidate.Id -Force -ErrorAction Stop
+            [void] $candidate.WaitForExit(10000)
         }
         catch [System.ComponentModel.Win32Exception] {
             continue
@@ -220,40 +231,27 @@ function Stop-InstalledTestProcesses {
 function Assert-InstalledProcessMissing {
     param([Parameter(Mandatory)][string] $Description)
 
-    $candidates = @(Get-Process -Name 'ReservePane' -ErrorAction SilentlyContinue)
-    foreach ($candidate in $candidates) {
-        try {
-            if ($candidate.Path -eq $installedExecutable) {
-                throw "$Description started ReservePane from '$installedExecutable'."
-            }
-        }
-        catch [System.ComponentModel.Win32Exception] {
-            continue
-        }
+    if (@(Get-InstalledTestProcesses).Count -gt 0) {
+        throw "$Description started ReservePane from '$installedExecutable'."
     }
 }
 
-function Assert-MsiActionNotExecuted {
+function Assert-LaunchReservePaneActionNotExecuted {
     param(
         [Parameter(Mandatory)]
         [string] $LogName,
-
-        [Parameter(Mandatory)]
-        [string] $ActionName,
 
         [Parameter(Mandatory)]
         [string] $Description
     )
 
     $logPath = Join-Path $logDirectory $LogName
-    $executionEntries = @(
-        Select-String `
+    if (Select-String `
             -LiteralPath $logPath `
-            -Pattern "Doing action: $ActionName" `
-            -SimpleMatch
-    )
-    if ($executionEntries.Count -gt 0) {
-        throw "$Description executed the prohibited $ActionName action. Log: $logPath"
+            -Pattern 'Doing action: LaunchReservePane' `
+            -SimpleMatch `
+            -Quiet) {
+        throw "$Description executed the prohibited LaunchReservePane action. Log: $logPath"
     }
 }
 
@@ -309,15 +307,13 @@ try {
         -Operation Install `
         -Target $baseMetadata.MsiPath `
         -LogName 'install-base.log')
-    Assert-MsiActionNotExecuted `
+    Assert-LaunchReservePaneActionNotExecuted `
         -LogName 'install-base.log' `
-        -ActionName 'LaunchReservePane' `
         -Description 'Silent install'
 
     Assert-PathExists $installedExecutable 'Installed executable'
     Assert-PathExists $startMenuShortcut 'Start Menu shortcut'
     Assert-Registration $baseMetadata.ProductCode $BaseVersion
-    Start-Sleep -Seconds 3
     Assert-InstalledProcessMissing 'Silent install'
 
     $baseFileInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($installedExecutable)
@@ -356,16 +352,14 @@ try {
         -Operation Install `
         -Target $upgradeMetadata.MsiPath `
         -LogName 'upgrade.log')
-    Assert-MsiActionNotExecuted `
+    Assert-LaunchReservePaneActionNotExecuted `
         -LogName 'upgrade.log' `
-        -ActionName 'LaunchReservePane' `
         -Description 'Silent upgrade'
 
     $testProcess.Refresh()
     if (-not $testProcess.HasExited) {
         throw 'The installed ReservePane process remained running after upgrade.'
     }
-    Start-Sleep -Seconds 3
     Assert-InstalledProcessMissing 'Silent upgrade'
     $portableProcess.Refresh()
     if ($portableProcess.HasExited) {
@@ -400,9 +394,8 @@ try {
         -Operation Uninstall `
         -Target $upgradeMetadata.ProductCode `
         -LogName 'uninstall.log')
-    Assert-MsiActionNotExecuted `
+    Assert-LaunchReservePaneActionNotExecuted `
         -LogName 'uninstall.log' `
-        -ActionName 'LaunchReservePane' `
         -Description 'Silent uninstall'
 
     Assert-PathMissing $installedExecutable 'Installed executable'

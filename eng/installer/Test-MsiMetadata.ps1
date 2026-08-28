@@ -266,7 +266,10 @@ try {
     Assert-Equal $launchAction.Count 1 'Launch application action count'
     Assert-Equal $launchAction[0].Source 'ReservePaneExecutable' 'Launch application executable'
     Assert-Equal $launchAction[0].Target '' 'Launch application arguments'
-    Assert-Equal ([int] $launchAction[0].Type) 0xD2 'Launch application custom action type'
+    $installedExecutableType = 0x12
+    $asyncNoWaitFlags = 0xC0
+    $expectedLaunchActionType = $installedExecutableType -bor $asyncNoWaitFlags
+    Assert-Equal ([int] $launchAction[0].Type) $expectedLaunchActionType 'Launch application custom action type'
 
     $sequences = @(Get-MsiRows $database `
         'SELECT `Action`,`Condition`,`Sequence` FROM `InstallExecuteSequence`' `
