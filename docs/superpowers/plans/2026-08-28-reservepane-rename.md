@@ -396,9 +396,10 @@ Use only ReservePane temporary install directories, data directories, registry k
 - [ ] **Step 6: Build and verify MSI metadata**
 
 ```powershell
-dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64-self-contained -o artifacts/ReservePane-msi-payload
-dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj -c Release --no-restore -p:MsiVersion=0.0.1 -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload" -p:OutputPath="$pwd/artifacts/msi/0.0.1/"
-dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj -c Release --no-restore -p:MsiVersion=0.0.2 -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload" -p:OutputPath="$pwd/artifacts/msi/0.0.2/"
+dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64-self-contained -p:Version=0.0.1 -p:AssemblyVersion=0.0.0.0 -p:FileVersion=0.0.1.0 -p:InformationalVersion=0.0.1 -p:IncludeSourceRevisionInInformationalVersion=false -o artifacts/ReservePane-msi-payload-0.0.1
+dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64-self-contained -p:Version=0.0.2 -p:AssemblyVersion=0.0.0.0 -p:FileVersion=0.0.2.0 -p:InformationalVersion=0.0.2 -p:IncludeSourceRevisionInInformationalVersion=false -o artifacts/ReservePane-msi-payload-0.0.2
+dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj -c Release --no-restore -p:MsiVersion=0.0.1 -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload-0.0.1" -p:OutputPath="$pwd/artifacts/msi/0.0.1/"
+dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj -c Release --no-restore -p:MsiVersion=0.0.2 -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload-0.0.2" -p:OutputPath="$pwd/artifacts/msi/0.0.2/"
 ./eng/installer/Test-MsiMetadata.ps1 -MsiPath artifacts/msi/0.0.1/ReservePane-v0.0.1-win-x64.msi -ExpectedVersion 0.0.1
 ./eng/installer/Test-MsiMetadata.ps1 -MsiPath artifacts/msi/0.0.2/ReservePane-v0.0.2-win-x64.msi -ExpectedVersion 0.0.2
 ```

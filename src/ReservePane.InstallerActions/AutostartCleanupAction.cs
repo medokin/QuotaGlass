@@ -16,7 +16,7 @@ public static class AutostartCleanupAction
                        "VALUES (?, ?, ?, ?, ?, ?) TEMPORARY"))
             using (var record = new Record(6))
             {
-                record[1] = "ReservePaneLegacyAutostartCleanup";
+                record[1] = "ReservePaneAutostartCleanup";
                 record[2] = 1;
                 record[3] = @"Software\Microsoft\Windows\CurrentVersion\Run";
                 record[4] = "ReservePane";
@@ -25,11 +25,11 @@ public static class AutostartCleanupAction
                 view.Execute(record);
             }
 
-            session.Log("Legacy autostart cleanup added to the uninstall transaction.");
+            session.Log("ReservePane autostart cleanup added to the uninstall transaction.");
         }
         catch (Exception exception)
         {
-            session.Log($"Legacy autostart cleanup could not be added: {exception.Message}");
+            session.Log($"ReservePane autostart cleanup could not be added: {exception.Message}");
             return ActionResult.Failure;
         }
 

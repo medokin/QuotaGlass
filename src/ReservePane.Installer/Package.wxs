@@ -3,7 +3,7 @@
            Manufacturer="ReservePane"
            Version="$(var.MsiVersion)"
            ProductCode="*"
-           UpgradeCode="A5EAB091-04C8-41D2-8F9E-2A0BFDC0D7E1"
+           UpgradeCode="0E117091-74A9-47E2-A7E5-16C3720AC18D"
            Language="1033"
            Scope="perUser"
            InstallerVersion="500"
@@ -35,7 +35,7 @@
 
     <Component Id="ReservePaneApplication"
                Directory="INSTALLFOLDER"
-               Guid="2B7C227E-86F8-4C76-A696-EB59FF94B591"
+               Guid="1105C941-2A6C-44A2-8C3E-9FA32AFEB314"
                Bitness="always64">
       <File Id="ReservePaneExecutable"
             Source="$(var.PayloadDir)\ReservePane.exe">
