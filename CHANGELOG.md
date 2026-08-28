@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/medokin/ReservePane/compare/v0.2.0...v0.3.0) (2026-08-28)
+
+
+### Features
+
+* **installer:** start app after interactive install ([#39](https://github.com/medokin/ReservePane/issues/39)) ([388c330](https://github.com/medokin/ReservePane/commit/388c3307e98e97d1c0e88fed40d397542d50a44d))
+* **ui:** show startup tray notification ([#41](https://github.com/medokin/ReservePane/issues/41)) ([b72ca80](https://github.com/medokin/ReservePane/commit/b72ca80cc3414ec9ee4c9a0e731918fe16c28a88))
+
 ## [0.2.0](https://github.com/medokin/ReservePane/compare/v0.1.2...v0.2.0) (2026-08-28)
 
 
