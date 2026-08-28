@@ -1,6 +1,6 @@
 # Release Process
 
-QuotaGlass uses Release Please to derive versions and changelog entries from
+ReservePane uses Release Please to derive versions and changelog entries from
 squash-merged Conventional Commit pull requests. The generated release pull
 request is the human approval gate for the version and release notes. The same
 workflow creates the GitHub Release and publishes the verified Windows assets,
@@ -69,14 +69,14 @@ request code.
 5. The merge reruns `Release Please`. It creates a `vX.Y.Z` tag and a draft
    GitHub Release.
 6. The workflow checks out the tagged commit on `windows-latest`, restores,
-   builds, tests, and publishes QuotaGlass with the release version stamped into
+   builds, tests, and publishes ReservePane with the release version stamped into
    the assembly and executable metadata.
 7. The workflow packages and uploads a release-candidate artifact containing:
 
-   - `QuotaGlass-vX.Y.Z-win-x64.zip`
-   - `QuotaGlass-vX.Y.Z-win-x64.sha256`
-   - `QuotaGlass-vX.Y.Z-win-x64.msi`
-   - `QuotaGlass-vX.Y.Z-win-x64.msi.sha256`
+   - `ReservePane-vX.Y.Z-win-x64.zip`
+   - `ReservePane-vX.Y.Z-win-x64.sha256`
+   - `ReservePane-vX.Y.Z-win-x64.msi`
+   - `ReservePane-vX.Y.Z-win-x64.msi.sha256`
 
 8. Download the workflow artifact and perform the applicable checks from
    [manual-test-checklist.md](manual-test-checklist.md) against that exact
@@ -86,14 +86,14 @@ request code.
    attaches the verified assets and publishes the draft GitHub Release, at
    which point release immutability locks the tag and assets.
 
-The ZIP contains only the framework-dependent `QuotaGlass.exe`. The MSI embeds
-a separate self-contained `QuotaGlass.exe`, installs per-user without elevation,
+The ZIP contains only the framework-dependent `ReservePane.exe`. The MSI embeds
+a separate self-contained `ReservePane.exe`, installs per-user without elevation,
 and does not require a separately installed .NET runtime. Each checksum file
 hashes the adjacent package and uses one of these formats:
 
 ```text
-<lowercase-sha256>  QuotaGlass-vX.Y.Z-win-x64.zip
-<lowercase-sha256>  QuotaGlass-vX.Y.Z-win-x64.msi
+<lowercase-sha256>  ReservePane-vX.Y.Z-win-x64.zip
+<lowercase-sha256>  ReservePane-vX.Y.Z-win-x64.msi
 ```
 
 Published tags, releases, and assets are immutable. Correct a published release
@@ -199,7 +199,7 @@ Protect `master` with a branch protection rule or repository ruleset that:
 - Disallows force pushes and deletion.
 - Prevents direct pushes and has no routine bypass actors.
 
-QuotaGlass currently has one maintainer, so the `Protect master` ruleset uses
+ReservePane currently has one maintainer, so the `Protect master` ruleset uses
 zero required pull request approvals. A maintainer still has to deliberately
 merge the generated release pull request, which is the human version and
 changelog gate. If a second trusted maintainer is added, require at least one

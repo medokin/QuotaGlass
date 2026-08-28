@@ -1,0 +1,94 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="ReservePane"
+           Manufacturer="ReservePane"
+           Version="$(var.MsiVersion)"
+           ProductCode="*"
+           UpgradeCode="0E117091-74A9-47E2-A7E5-16C3720AC18D"
+           Language="1033"
+           Scope="perUser"
+           InstallerVersion="500"
+           Compressed="yes">
+    <SummaryInformation Description="ReservePane Windows x64 installer" />
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of ReservePane is already installed." />
+
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/medokin/ReservePane" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Icon Id="ReservePaneIcon" SourceFile="..\..\assets\branding\reservepane.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ReservePaneIcon" />
+    <SetProperty Id="ARPINSTALLLOCATION"
+                 Value="[INSTALLFOLDER]"
+                 After="CostFinalize"
+                 Sequence="execute" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="ReservePane" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="ReservePane" />
+    </StandardDirectory>
+
+    <Component Id="ReservePaneApplication"
+               Directory="INSTALLFOLDER"
+               Guid="1105C941-2A6C-44A2-8C3E-9FA32AFEB314"
+               Bitness="always64">
+      <File Id="ReservePaneExecutable"
+            Source="$(var.PayloadDir)\ReservePane.exe">
+        <Shortcut Id="ReservePaneStartMenuShortcut"
+                  Directory="ApplicationProgramsFolder"
+                  Name="ReservePane"
+                  Description="ReservePane"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="ReservePaneIcon" />
+      </File>
+      <RemoveFolder Id="RemoveApplicationProgramsFolder"
+                    Directory="ApplicationProgramsFolder"
+                    On="uninstall" />
+      <RemoveFolder Id="RemoveInstallFolder"
+                    Directory="INSTALLFOLDER"
+                    On="uninstall" />
+      <RemoveFolder Id="RemoveProgramsFolder"
+                    Directory="ProgramsFolder"
+                    On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\ReservePane\Installer"
+                     Name="InstallLocation"
+                     Type="string"
+                     Value="[INSTALLFOLDER]"
+                     KeyPath="yes" />
+    </Component>
+
+    <Binary Id="ReservePaneInstallerActions"
+            SourceFile="$(var.ReservePane.InstallerActions.TargetDir)ReservePane.InstallerActions.CA.dll" />
+    <CustomAction Id="CloseInstalledReservePane"
+                  BinaryRef="ReservePaneInstallerActions"
+                  DllEntry="CloseInstalledReservePane"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="check" />
+    <CustomAction Id="AddReservePaneAutostartCleanup"
+                  BinaryRef="ReservePaneInstallerActions"
+                  DllEntry="AddReservePaneAutostartCleanup"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CloseInstalledReservePane"
+              Before="InstallValidate"
+              Condition="WIX_UPGRADE_DETECTED OR (Installed AND REMOVE=&quot;ALL&quot;)" />
+      <Custom Action="AddReservePaneAutostartCleanup"
+              Before="RemoveRegistryValues"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <Feature Id="ReservePaneFeature" Title="ReservePane" Level="1">
+      <ComponentRef Id="ReservePaneApplication" />
+    </Feature>
+  </Package>
+</Wix>

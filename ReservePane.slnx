@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ReservePane/ReservePane.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ReservePane.Tests/ReservePane.Tests.csproj" />
+  </Folder>
+</Solution>

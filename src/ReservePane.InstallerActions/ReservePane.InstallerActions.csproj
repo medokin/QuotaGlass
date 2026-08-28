@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>ReservePane.InstallerActions</AssemblyName>
+    <RootNamespace>ReservePane.InstallerActions</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Dtf.CustomAction" Version="5.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="CustomAction.config" />
+    <Content Include="CustomAction.config" />
+    <Compile Include="..\ReservePane\Platform\InstallerShutdownSignalName.cs"
+             Link="InstallerShutdownSignalName.cs" />
+  </ItemGroup>
+</Project>

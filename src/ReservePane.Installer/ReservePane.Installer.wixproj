@@ -1,0 +1,29 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>ReservePane-v$(MsiVersion)-win-x64</OutputName>
+    <IntermediateOutputPath>obj\$(Configuration)\$(MsiVersion)\</IntermediateOutputPath>
+    <SuppressIces>ICE91</SuppressIces>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefineConstants>PayloadDir=$(PayloadDir);MsiVersion=$(MsiVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ReservePane.InstallerActions\ReservePane.InstallerActions.csproj" />
+  </ItemGroup>
+
+  <Target Name="ValidateInstallerInputs" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(MsiVersion)' == ''"
+           Text="MsiVersion must be provided as major.minor.patch." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(MsiVersion)', '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$'))"
+           Text="MsiVersion must be a three-part numeric version without leading zeroes." />
+    <Error Condition="$([System.Version]::Parse('$(MsiVersion)').Major) &gt; 255 Or $([System.Version]::Parse('$(MsiVersion)').Minor) &gt; 255 Or $([System.Version]::Parse('$(MsiVersion)').Build) &gt; 65535"
+           Text="MsiVersion exceeds Windows Installer version limits." />
+    <Error Condition="'$(PayloadDir)' == ''"
+           Text="PayloadDir must point to the self-contained publish directory." />
+    <Error Condition="!Exists('$(PayloadDir)\ReservePane.exe')"
+           Text="PayloadDir must contain ReservePane.exe." />
+  </Target>
+
+</Project>

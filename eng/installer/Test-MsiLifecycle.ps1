@@ -37,18 +37,18 @@ if ($baseMetadata.UpgradeCode -ne $upgradeMetadata.UpgradeCode) {
     throw 'Base and upgrade MSI UpgradeCodes must match.'
 }
 
-$installDirectory = Join-Path $env:LOCALAPPDATA 'Programs\QuotaGlass'
-$installedExecutable = Join-Path $installDirectory 'QuotaGlass.exe'
-$startMenuDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\QuotaGlass'
-$startMenuShortcut = Join-Path $startMenuDirectory 'QuotaGlass.lnk'
-$dataDirectory = Join-Path $env:APPDATA 'QuotaGlass'
+$installDirectory = Join-Path $env:LOCALAPPDATA 'Programs\ReservePane'
+$installedExecutable = Join-Path $installDirectory 'ReservePane.exe'
+$startMenuDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\ReservePane'
+$startMenuShortcut = Join-Path $startMenuDirectory 'ReservePane.lnk'
+$dataDirectory = Join-Path $env:APPDATA 'ReservePane'
 $sentinelPath = Join-Path $dataDirectory ("installer-test-$([guid]::NewGuid().ToString('N')).sentinel")
 $runSubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
-$runValueName = 'QuotaGlass'
+$runValueName = 'ReservePane'
 $msiExecPath = Join-Path $env:SystemRoot 'System32\msiexec.exe'
-$logDirectory = Join-Path ([IO.Path]::GetTempPath()) ("QuotaGlass-MsiLifecycle-$([guid]::NewGuid().ToString('N'))")
+$logDirectory = Join-Path ([IO.Path]::GetTempPath()) ("ReservePane-MsiLifecycle-$([guid]::NewGuid().ToString('N'))")
 $portableDirectory = Join-Path $logDirectory 'portable'
-$portableExecutable = Join-Path $portableDirectory 'QuotaGlass.exe'
+$portableExecutable = Join-Path $portableDirectory 'ReservePane.exe'
 
 function Assert-PathExists {
     param(
@@ -132,8 +132,8 @@ function Assert-Registration {
     )
 
     $displayName = Get-InstalledProductInfo $ProductCode 'ProductName'
-    if ($displayName -ne 'QuotaGlass') {
-        throw "Apps & Features DisplayName must be QuotaGlass, found '$displayName'."
+    if ($displayName -ne 'ReservePane') {
+        throw "Apps & Features DisplayName must be ReservePane, found '$displayName'."
     }
     $displayVersion = Get-InstalledProductInfo $ProductCode 'VersionString'
     if ($displayVersion -ne $ExpectedVersion) {
@@ -203,7 +203,7 @@ function Invoke-MsiExec {
 }
 
 function Stop-InstalledTestProcesses {
-    $candidates = @(Get-Process -Name 'QuotaGlass' -ErrorAction SilentlyContinue)
+    $candidates = @(Get-Process -Name 'ReservePane' -ErrorAction SilentlyContinue)
     foreach ($candidate in $candidates) {
         try {
             if ($candidate.Path -eq $installedExecutable) {
@@ -238,7 +238,7 @@ finally {
     [void] [Runtime.InteropServices.Marshal]::FinalReleaseComObject($windowsInstaller)
 }
 if ($existingInstallers.Count -gt 0) {
-    throw 'A QuotaGlass MSI is already installed for the current user. Remove it before lifecycle testing.'
+    throw 'A ReservePane MSI is already installed for the current user. Remove it before lifecycle testing.'
 }
 if (Test-Path -LiteralPath $installDirectory) {
     throw "The lifecycle test install directory already exists: $installDirectory"
@@ -262,7 +262,7 @@ $portableProcess = $null
 $completed = $false
 [void] (New-Item -ItemType Directory -Path $logDirectory)
 [void] (New-Item -ItemType Directory -Path $dataDirectory -Force)
-[IO.File]::WriteAllText($sentinelPath, 'QuotaGlass installer lifecycle sentinel')
+[IO.File]::WriteAllText($sentinelPath, 'ReservePane installer lifecycle sentinel')
 
 try {
     [void] (Invoke-MsiExec `
@@ -287,7 +287,7 @@ try {
     Start-Sleep -Seconds 3
     $testProcess.Refresh()
     if ($testProcess.HasExited) {
-        throw "Installed QuotaGlass exited before upgrade with code $($testProcess.ExitCode)."
+        throw "Installed ReservePane exited before upgrade with code $($testProcess.ExitCode)."
     }
     if ($testProcess.Path -ne $installedExecutable) {
         throw "Running test process path is '$($testProcess.Path)'."
@@ -303,7 +303,7 @@ try {
     Start-Sleep -Seconds 3
     $portableProcess.Refresh()
     if ($portableProcess.HasExited) {
-        throw "Portable QuotaGlass exited before upgrade with code $($portableProcess.ExitCode)."
+        throw "Portable ReservePane exited before upgrade with code $($portableProcess.ExitCode)."
     }
 
     [void] (Invoke-MsiExec `
@@ -313,11 +313,11 @@ try {
 
     $testProcess.Refresh()
     if (-not $testProcess.HasExited) {
-        throw 'The installed QuotaGlass process remained running after upgrade.'
+        throw 'The installed ReservePane process remained running after upgrade.'
     }
     $portableProcess.Refresh()
     if ($portableProcess.HasExited) {
-        throw "Portable QuotaGlass was closed during upgrade with code $($portableProcess.ExitCode)."
+        throw "Portable ReservePane was closed during upgrade with code $($portableProcess.ExitCode)."
     }
 
     Assert-ProductMissing $baseMetadata.ProductCode 'Base Apps & Features registration'
@@ -341,7 +341,7 @@ try {
         $runKey.Dispose()
     }
     if (-not (Test-RunValueExists)) {
-        throw 'QuotaGlass Run test value was not written before uninstall.'
+        throw 'ReservePane Run test value was not written before uninstall.'
     }
 
     [void] (Invoke-MsiExec `
@@ -357,7 +357,7 @@ try {
     Assert-PathExists $sentinelPath 'Settings sentinel'
     $portableProcess.Refresh()
     if ($portableProcess.HasExited) {
-        throw "Portable QuotaGlass was closed during uninstall with code $($portableProcess.ExitCode)."
+        throw "Portable ReservePane was closed during uninstall with code $($portableProcess.ExitCode)."
     }
     if (Test-RunValueExists) {
         $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runSubKey)
@@ -371,7 +371,7 @@ try {
             $runKey.Dispose()
         }
 
-        throw "QuotaGlass Run value remains after uninstall: '$remainingRunValue'."
+        throw "ReservePane Run value remains after uninstall: '$remainingRunValue'."
     }
 
     $completed = $true

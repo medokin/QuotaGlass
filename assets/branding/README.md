@@ -1,6 +1,6 @@
-# QuotaGlass brand assets
+# ReservePane brand assets
 
-`quotaglass-logo.svg` is the source of truth for the logo. The PNG and ICO files
+`reservepane-logo.svg` is the source of truth for the logo. The PNG and ICO files
 are generated from it with:
 
 ```powershell
@@ -15,4 +15,4 @@ The logo uses the application palette:
 
 - Background: `#161C23`
 - Gauge and needle: `#35C46A`
-- Q outline: `#8F9CAA`
+- Pane frame: `#8F9CAA`

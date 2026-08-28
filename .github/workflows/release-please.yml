@@ -53,8 +53,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_branch='release-please--branches--master--components--QuotaGlass'
+          release_branch='release-please--branches--master--components--ReservePane'
           if jq -e 'length == 1' <<<"${RELEASE_PRS:-[]}" >/dev/null; then
+            action_branch="$(jq -er '.[0].headBranchName' <<<"${RELEASE_PRS}")"
+            if [[ "${action_branch}" != "${release_branch}" ]]; then
+              echo "Release Please returned unexpected branch: ${action_branch}" >&2
+              exit 1
+            fi
             release_prs="${RELEASE_PRS}"
           else
             release_prs="$(
@@ -339,8 +344,8 @@ jobs:
       - name: Restore
         shell: pwsh
         run: |
-          dotnet restore QuotaGlass.slnx
-          dotnet restore src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj
+          dotnet restore ReservePane.slnx
+          dotnet restore src/ReservePane.Installer/ReservePane.Installer.wixproj
 
       - name: Build
         shell: pwsh
@@ -352,10 +357,10 @@ jobs:
               "-p:InformationalVersion=$env:RELEASE_VERSION"
               '-p:IncludeSourceRevisionInInformationalVersion=false'
           )
-          dotnet build QuotaGlass.slnx -c Release --no-restore @versionProperties
+          dotnet build ReservePane.slnx -c Release --no-restore @versionProperties
 
       - name: Test
-        run: dotnet test QuotaGlass.slnx -c Release --no-build
+        run: dotnet test ReservePane.slnx -c Release --no-build
 
       - name: Publish
         shell: pwsh
@@ -367,30 +372,30 @@ jobs:
               "-p:InformationalVersion=$env:RELEASE_VERSION"
               '-p:IncludeSourceRevisionInInformationalVersion=false'
           )
-          dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+          dotnet publish src/ReservePane/ReservePane.csproj `
               -c Release `
               -p:PublishProfile=win-x64 `
-              -o artifacts/QuotaGlass-win-x64 `
+              -o artifacts/ReservePane-win-x64 `
               @versionProperties
-          dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+          dotnet publish src/ReservePane/ReservePane.csproj `
               -c Release `
               --no-restore `
               -p:PublishProfile=win-x64-self-contained `
-              -o artifacts/QuotaGlass-msi-payload `
+              -o artifacts/ReservePane-msi-payload `
               @versionProperties
 
       - name: Build MSI
         shell: pwsh
         run: |
-          dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj `
+          dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj `
               -c Release `
               --no-restore `
               -p:MsiVersion=$env:RELEASE_VERSION `
-              -p:PayloadDir="$pwd/artifacts/QuotaGlass-msi-payload" `
+              -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload" `
               -p:OutputPath="$pwd/artifacts/msi/"
 
           ./eng/installer/Test-MsiMetadata.ps1 `
-              -MsiPath "artifacts/msi/QuotaGlass-v$env:RELEASE_VERSION-win-x64.msi" `
+              -MsiPath "artifacts/msi/ReservePane-v$env:RELEASE_VERSION-win-x64.msi" `
               -ExpectedVersion $env:RELEASE_VERSION
 
       - name: Verify and package release
@@ -399,10 +404,10 @@ jobs:
           $expectedAssemblyVersion = "$env:RELEASE_MAJOR.0.0.0"
           $expectedFileVersion = "$env:RELEASE_VERSION.0"
           $assemblyPath = Resolve-Path `
-              'src/QuotaGlass/bin/Release/net10.0-windows10.0.19041.0/win-x64/QuotaGlass.dll'
-          $publishDirectory = Resolve-Path 'artifacts/QuotaGlass-win-x64'
-          $msiPayloadDirectory = Resolve-Path 'artifacts/QuotaGlass-msi-payload'
-          $executablePath = Join-Path $publishDirectory 'QuotaGlass.exe'
+              'src/ReservePane/bin/Release/net10.0-windows10.0.19041.0/win-x64/ReservePane.dll'
+          $publishDirectory = Resolve-Path 'artifacts/ReservePane-win-x64'
+          $msiPayloadDirectory = Resolve-Path 'artifacts/ReservePane-msi-payload'
+          $executablePath = Join-Path $publishDirectory 'ReservePane.exe'
 
           $assemblyName = [Reflection.AssemblyName]::GetAssemblyName($assemblyPath)
           if ($assemblyName.Version.ToString() -ne $expectedAssemblyVersion) {
@@ -419,11 +424,11 @@ jobs:
 
           $publishedFiles = @(Get-ChildItem -LiteralPath $publishDirectory -File -Recurse)
           if ($publishedFiles.Count -ne 1 -or $publishedFiles[0].FullName -ne $executablePath) {
-              throw "Expected only QuotaGlass.exe, found: $($publishedFiles.FullName -join ', ')"
+              throw "Expected only ReservePane.exe, found: $($publishedFiles.FullName -join ', ')"
           }
 
           $msiPayloadFiles = @(Get-ChildItem -LiteralPath $msiPayloadDirectory -File -Recurse)
-          if ($msiPayloadFiles.Count -ne 1 -or $msiPayloadFiles[0].Name -ne 'QuotaGlass.exe') {
+          if ($msiPayloadFiles.Count -ne 1 -or $msiPayloadFiles[0].Name -ne 'ReservePane.exe') {
               throw "Expected one self-contained MSI payload, found: $($msiPayloadFiles.FullName -join ', ')"
           }
 
@@ -436,9 +441,9 @@ jobs:
           }
 
           $releaseDirectory = New-Item -ItemType Directory -Path artifacts/release -Force
-          $archiveName = "QuotaGlass-$env:RELEASE_TAG-win-x64.zip"
-          $checksumName = "QuotaGlass-$env:RELEASE_TAG-win-x64.sha256"
-          $msiName = "QuotaGlass-$env:RELEASE_TAG-win-x64.msi"
+          $archiveName = "ReservePane-$env:RELEASE_TAG-win-x64.zip"
+          $checksumName = "ReservePane-$env:RELEASE_TAG-win-x64.sha256"
+          $msiName = "ReservePane-$env:RELEASE_TAG-win-x64.msi"
           $msiChecksumName = "$msiName.sha256"
           $archivePath = Join-Path $releaseDirectory $archiveName
           $checksumPath = Join-Path $releaseDirectory $checksumName
@@ -453,8 +458,8 @@ jobs:
           $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
           try {
               if ($archive.Entries.Count -ne 1 -or
-                  $archive.Entries[0].FullName -ne 'QuotaGlass.exe') {
-                  throw "ZIP must contain only QuotaGlass.exe, found: $($archive.Entries.FullName -join ', ')"
+                  $archive.Entries[0].FullName -ne 'ReservePane.exe') {
+                  throw "ZIP must contain only ReservePane.exe, found: $($archive.Entries.FullName -join ', ')"
               }
           }
           finally {
@@ -468,7 +473,7 @@ jobs:
               [Text.UTF8Encoding]::new($false))
 
           Copy-Item `
-              -LiteralPath "artifacts/msi/QuotaGlass-v$env:RELEASE_VERSION-win-x64.msi" `
+              -LiteralPath "artifacts/msi/ReservePane-v$env:RELEASE_VERSION-win-x64.msi" `
               -Destination $msiPath
           $msiHash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText(
@@ -537,9 +542,9 @@ jobs:
               }
           }
 
-          $archive = "QuotaGlass-$env:RELEASE_TAG-win-x64.zip"
-          $checksum = "QuotaGlass-$env:RELEASE_TAG-win-x64.sha256"
-          $msi = "QuotaGlass-$env:RELEASE_TAG-win-x64.msi"
+          $archive = "ReservePane-$env:RELEASE_TAG-win-x64.zip"
+          $checksum = "ReservePane-$env:RELEASE_TAG-win-x64.sha256"
+          $msi = "ReservePane-$env:RELEASE_TAG-win-x64.msi"
           $msiChecksum = "$msi.sha256"
           Resolve-PackagePair $archive $checksum
           Resolve-PackagePair $msi $msiChecksum
@@ -547,8 +552,8 @@ jobs:
           $archivePath = Join-Path $releaseDirectory $archive
           $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
           try {
-              if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne 'QuotaGlass.exe') {
-                  throw 'The canonical ZIP must contain only QuotaGlass.exe.'
+              if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne 'ReservePane.exe') {
+                  throw 'The canonical ZIP must contain only ReservePane.exe.'
               }
           }
           finally {
@@ -562,12 +567,12 @@ jobs:
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: QuotaGlass-${{ needs.release_please.outputs.tag_name }}-release
+          name: ReservePane-${{ needs.release_please.outputs.tag_name }}-release
           path: |
-            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.zip
-            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.sha256
-            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.msi
-            artifacts/release/QuotaGlass-${{ needs.release_please.outputs.tag_name }}-win-x64.msi.sha256
+            artifacts/release/ReservePane-${{ needs.release_please.outputs.tag_name }}-win-x64.zip
+            artifacts/release/ReservePane-${{ needs.release_please.outputs.tag_name }}-win-x64.sha256
+            artifacts/release/ReservePane-${{ needs.release_please.outputs.tag_name }}-win-x64.msi
+            artifacts/release/ReservePane-${{ needs.release_please.outputs.tag_name }}-win-x64.msi.sha256
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -590,7 +595,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: QuotaGlass-${{ needs.release_please.outputs.tag_name }}-release
+          name: ReservePane-${{ needs.release_please.outputs.tag_name }}-release
           path: artifacts/release
 
       - name: Verify release candidate
@@ -598,16 +603,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          archive="QuotaGlass-${RELEASE_TAG}-win-x64.zip"
-          checksum="QuotaGlass-${RELEASE_TAG}-win-x64.sha256"
-          msi="QuotaGlass-${RELEASE_TAG}-win-x64.msi"
+          archive="ReservePane-${RELEASE_TAG}-win-x64.zip"
+          checksum="ReservePane-${RELEASE_TAG}-win-x64.sha256"
+          msi="ReservePane-${RELEASE_TAG}-win-x64.msi"
           msi_checksum="${msi}.sha256"
           cd artifacts/release
           sha256sum --check "${checksum}"
           sha256sum --check "${msi_checksum}"
           mapfile -t entries < <(unzip -Z1 "${archive}")
-          if [[ "${#entries[@]}" -ne 1 || "${entries[0]}" != 'QuotaGlass.exe' ]]; then
-            echo "ZIP must contain only QuotaGlass.exe: ${entries[*]}" >&2
+          if [[ "${#entries[@]}" -ne 1 || "${entries[0]}" != 'ReservePane.exe' ]]; then
+            echo "ZIP must contain only ReservePane.exe: ${entries[*]}" >&2
             exit 1
           fi
 
@@ -642,9 +647,9 @@ jobs:
           fi
           verify_release_target
 
-          archive="QuotaGlass-${RELEASE_TAG}-win-x64.zip"
-          checksum="QuotaGlass-${RELEASE_TAG}-win-x64.sha256"
-          msi="QuotaGlass-${RELEASE_TAG}-win-x64.msi"
+          archive="ReservePane-${RELEASE_TAG}-win-x64.zip"
+          checksum="ReservePane-${RELEASE_TAG}-win-x64.sha256"
+          msi="ReservePane-${RELEASE_TAG}-win-x64.msi"
           msi_checksum="${msi}.sha256"
           compare_root="${RUNNER_TEMP}/release-assets"
           mkdir -p "${compare_root}"

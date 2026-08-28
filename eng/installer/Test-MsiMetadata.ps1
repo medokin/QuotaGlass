@@ -14,7 +14,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$expectedUpgradeCode = '{A5EAB091-04C8-41D2-8F9E-2A0BFDC0D7E1}'
+$expectedUpgradeCode = '{0E117091-74A9-47E2-A7E5-16C3720AC18D}'
+$expectedComponentGuid = '{1105C941-2A6C-44A2-8C3E-9FA32AFEB314}'
 $runKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 
 function Assert-Equal {
@@ -116,9 +117,9 @@ $summary = $null
 try {
     $database = $installer.OpenDatabase($resolvedMsiPath, 0)
 
-    Assert-Equal (Get-MsiProperty $database 'ProductName') 'QuotaGlass' 'ProductName'
+    Assert-Equal (Get-MsiProperty $database 'ProductName') 'ReservePane' 'ProductName'
     Assert-Equal (Get-MsiProperty $database 'ProductVersion') $ExpectedVersion 'ProductVersion'
-    Assert-Equal (Get-MsiProperty $database 'Manufacturer') 'QuotaGlass' 'Manufacturer'
+    Assert-Equal (Get-MsiProperty $database 'Manufacturer') 'ReservePane' 'Manufacturer'
     Assert-Equal (Get-MsiProperty $database 'ProductLanguage') '1033' 'ProductLanguage'
     Assert-Equal (Get-MsiProperty $database 'UpgradeCode') $expectedUpgradeCode 'UpgradeCode'
     Assert-Equal (Get-MsiProperty $database 'ARPNOMODIFY') '1' 'ARPNOMODIFY'
@@ -129,9 +130,9 @@ try {
     Assert-Equal (Get-MsiProperty $database 'MSIRMSHUTDOWN') $null 'MSIRMSHUTDOWN'
     Assert-Equal `
         (Get-MsiProperty $database 'ARPURLINFOABOUT') `
-        'https://github.com/medokin/QuotaGlass' `
+        'https://github.com/medokin/ReservePane' `
         'ARPURLINFOABOUT'
-    Assert-Equal (Get-MsiProperty $database 'ARPPRODUCTICON') 'QuotaGlassIcon' 'ARPPRODUCTICON'
+    Assert-Equal (Get-MsiProperty $database 'ARPPRODUCTICON') 'ReservePaneIcon' 'ARPPRODUCTICON'
     Assert-Equal (Get-MsiProperty $database 'ALLUSERS') $null 'ALLUSERS'
 
     $productCode = Get-MsiProperty $database 'ProductCode'
@@ -143,7 +144,27 @@ try {
         'ProductCode must differ from the stable UpgradeCode.'
 
     $summary = $database.SummaryInformation(0)
+    Assert-Equal $summary.Property(3) 'ReservePane Windows x64 installer' 'Summary description'
     Assert-Equal $summary.Property(7) 'x64;1033' 'Summary template'
+
+    $icons = @(Get-MsiRows $database `
+        'SELECT `Name` FROM `Icon`' `
+        @('Id'))
+    Assert-Equal $icons.Count 1 'Icon count'
+    Assert-Equal $icons[0].Id 'ReservePaneIcon' 'Application icon id'
+
+    $binaries = @(Get-MsiRows $database `
+        'SELECT `Name` FROM `Binary`' `
+        @('Id'))
+    Assert-Equal $binaries.Count 1 'Binary count'
+    Assert-Equal $binaries[0].Id 'ReservePaneInstallerActions' 'Installer actions binary id'
+
+    $features = @(Get-MsiRows $database `
+        'SELECT `Feature`,`Title` FROM `Feature`' `
+        @('Id', 'Title'))
+    Assert-Equal $features.Count 1 'Feature count'
+    Assert-Equal $features[0].Id 'ReservePaneFeature' 'Application feature id'
+    Assert-Equal $features[0].Title 'ReservePane' 'Application feature title'
 
     $directories = @(Get-MsiRows $database `
         'SELECT `Directory`,`Directory_Parent`,`DefaultDir` FROM `Directory`' `
@@ -152,8 +173,8 @@ try {
     Assert-Equal $installDirectory.Count 1 'INSTALLFOLDER row count'
     Assert-Equal $installDirectory[0].Parent 'ProgramsFolder' 'INSTALLFOLDER parent'
     Assert-True `
-        ($installDirectory[0].Name -match '(^|\|)QuotaGlass$') `
-        "INSTALLFOLDER name must resolve to QuotaGlass, found '$($installDirectory[0].Name)'."
+        ($installDirectory[0].Name -match '(^|\|)ReservePane$') `
+        "INSTALLFOLDER name must resolve to ReservePane, found '$($installDirectory[0].Name)'."
 
     $programsDirectory = @($directories | Where-Object Id -eq 'ProgramsFolder')
     Assert-Equal $programsDirectory.Count 1 'ProgramsFolder row count'
@@ -164,7 +185,8 @@ try {
         'SELECT `Component`,`ComponentId`,`Directory_`,`Attributes`,`KeyPath` FROM `Component`' `
         @('Id', 'Guid', 'Directory', 'Attributes', 'KeyPath'))
     Assert-Equal $components.Count 1 'Component count'
-    Assert-Equal $components[0].Id 'QuotaGlassApplication' 'Application component id'
+    Assert-Equal $components[0].Id 'ReservePaneApplication' 'Application component id'
+    Assert-Equal $components[0].Guid $expectedComponentGuid 'Application component GUID'
     Assert-Equal $components[0].Directory 'INSTALLFOLDER' 'Application component directory'
     $componentAttributes = [int] $components[0].Attributes
     Assert-True `
@@ -178,27 +200,27 @@ try {
         'SELECT `File`,`Component_`,`FileName` FROM `File`' `
         @('Id', 'Component', 'Name'))
     Assert-Equal $files.Count 1 'MSI payload file count'
-    Assert-Equal $files[0].Id 'QuotaGlassExecutable' 'Payload file id'
-    Assert-Equal $files[0].Component 'QuotaGlassApplication' 'Payload component'
+    Assert-Equal $files[0].Id 'ReservePaneExecutable' 'Payload file id'
+    Assert-Equal $files[0].Component 'ReservePaneApplication' 'Payload component'
     Assert-True `
-        ($files[0].Name -match '(^|\|)QuotaGlass\.exe$') `
-        "MSI payload must contain only QuotaGlass.exe, found '$($files[0].Name)'."
+        ($files[0].Name -match '(^|\|)ReservePane\.exe$') `
+        "MSI payload must contain only ReservePane.exe, found '$($files[0].Name)'."
 
     $shortcuts = @(Get-MsiRows $database `
         'SELECT `Shortcut`,`Directory_`,`Name`,`Component_`,`Target`,`Icon_` FROM `Shortcut`' `
         @('Id', 'Directory', 'Name', 'Component', 'Target', 'Icon'))
     Assert-Equal $shortcuts.Count 1 'Shortcut count'
-    Assert-Equal $shortcuts[0].Id 'QuotaGlassStartMenuShortcut' 'Shortcut id'
+    Assert-Equal $shortcuts[0].Id 'ReservePaneStartMenuShortcut' 'Shortcut id'
     Assert-Equal $shortcuts[0].Directory 'ApplicationProgramsFolder' 'Shortcut directory'
-    Assert-Equal $shortcuts[0].Target '[#QuotaGlassExecutable]' 'Shortcut target'
-    Assert-Equal $shortcuts[0].Icon 'QuotaGlassIcon' 'Shortcut icon'
+    Assert-Equal $shortcuts[0].Target '[#ReservePaneExecutable]' 'Shortcut target'
+    Assert-Equal $shortcuts[0].Icon 'ReservePaneIcon' 'Shortcut icon'
     Assert-Equal @($shortcuts | Where-Object Directory -eq 'DesktopFolder').Count 0 'Desktop shortcut count'
 
     $registryRows = @(Get-MsiRows $database `
         'SELECT `Root`,`Key`,`Name`,`Value`,`Component_` FROM `Registry`' `
         @('Root', 'Key', 'Name', 'Value', 'Component'))
     Assert-Equal $registryRows.Count 1 'Registry row count'
-    $installerMarker = @($registryRows | Where-Object Key -eq 'Software\QuotaGlass\Installer')
+    $installerMarker = @($registryRows | Where-Object Key -eq 'Software\ReservePane\Installer')
     Assert-Equal $installerMarker.Count 1 'Installer marker row count'
     Assert-Equal $installerMarker[0].Root '1' 'Installer marker root'
     Assert-Equal $installerMarker[0].Name 'InstallLocation' 'Installer marker value name'
@@ -221,28 +243,28 @@ try {
     Assert-Equal `
         @($customActions | Where-Object Action -notin @(
             'SetARPINSTALLLOCATION',
-            'CloseInstalledQuotaGlass',
-            'AddQuotaGlassAutostartCleanup')).Count `
+            'CloseInstalledReservePane',
+            'AddReservePaneAutostartCleanup')).Count `
         0 `
         'Unexpected custom action count'
 
-    $closeAction = @($customActions | Where-Object Action -eq 'CloseInstalledQuotaGlass')
+    $closeAction = @($customActions | Where-Object Action -eq 'CloseInstalledReservePane')
     Assert-Equal $closeAction.Count 1 'Close application action count'
-    Assert-Equal $closeAction[0].Source 'QuotaGlassInstallerActions' 'Close application binary'
-    Assert-Equal $closeAction[0].Target 'CloseInstalledQuotaGlass' 'Close application entry point'
+    Assert-Equal $closeAction[0].Source 'ReservePaneInstallerActions' 'Close application binary'
+    Assert-Equal $closeAction[0].Target 'CloseInstalledReservePane' 'Close application entry point'
     Assert-True (([int] $closeAction[0].Type -band 0x40) -eq 0) 'Close application failures must be checked.'
 
-    $cleanupAction = @($customActions | Where-Object Action -eq 'AddQuotaGlassAutostartCleanup')
+    $cleanupAction = @($customActions | Where-Object Action -eq 'AddReservePaneAutostartCleanup')
     Assert-Equal $cleanupAction.Count 1 'Autostart cleanup action count'
-    Assert-Equal $cleanupAction[0].Source 'QuotaGlassInstallerActions' 'Autostart cleanup binary'
-    Assert-Equal $cleanupAction[0].Target 'AddQuotaGlassAutostartCleanup' 'Autostart cleanup entry point'
+    Assert-Equal $cleanupAction[0].Source 'ReservePaneInstallerActions' 'Autostart cleanup binary'
+    Assert-Equal $cleanupAction[0].Target 'AddReservePaneAutostartCleanup' 'Autostart cleanup entry point'
     Assert-True (([int] $cleanupAction[0].Type -band 0x400) -eq 0) 'Autostart cleanup must be immediate.'
     Assert-True (([int] $cleanupAction[0].Type -band 0x40) -eq 0) 'Autostart cleanup failures must be checked.'
 
     $sequences = @(Get-MsiRows $database `
         'SELECT `Action`,`Condition`,`Sequence` FROM `InstallExecuteSequence`' `
         @('Action', 'Condition', 'Sequence'))
-    $closeSequence = @($sequences | Where-Object Action -eq 'CloseInstalledQuotaGlass')
+    $closeSequence = @($sequences | Where-Object Action -eq 'CloseInstalledReservePane')
     $installValidateSequence = @($sequences | Where-Object Action -eq 'InstallValidate')
     Assert-Equal $closeSequence.Count 1 'Close application sequence count'
     Assert-Equal `
@@ -254,7 +276,7 @@ try {
         ([int] $closeSequence[0].Sequence -lt [int] $installValidateSequence[0].Sequence) `
         'Close application action must run before InstallValidate checks locked files.'
 
-    $cleanupSequence = @($sequences | Where-Object Action -eq 'AddQuotaGlassAutostartCleanup')
+    $cleanupSequence = @($sequences | Where-Object Action -eq 'AddReservePaneAutostartCleanup')
     $removeRegistrySequence = @($sequences | Where-Object Action -eq 'RemoveRegistryValues')
     Assert-Equal $cleanupSequence.Count 1 'Autostart cleanup sequence count'
     Assert-Equal $removeRegistrySequence.Count 1 'RemoveRegistryValues sequence count'
