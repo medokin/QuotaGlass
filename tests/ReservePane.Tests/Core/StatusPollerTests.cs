@@ -845,6 +845,33 @@ public sealed class StatusPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task Start_ReadyWaitsForCadenceTimerInitialization()
+    {
+        // Break caught: startup completion races ahead of the background poll loop initialization.
+        using var time = new GatedTimeProvider();
+        StatusPoller poller = CreatePoller([], timeProvider: time);
+        using var cancellation = new CancellationTokenSource();
+        PollLoopRun run = poller.Start(cancellation.Token);
+
+        try
+        {
+            await time.TimerCreationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.False(run.Ready.IsCompleted);
+
+            time.ReleaseTimerCreation();
+            await run.Ready.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.True(time.TimerCreated);
+        }
+        finally
+        {
+            time.ReleaseTimerCreation();
+            cancellation.Cancel();
+            await run.Completion.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Fact]
     public async Task RequestRefresh_WakesRunLoopBeforeTimerTick()
     {
         // Break caught: refresh requests wait for the scheduled cadence.
@@ -1623,6 +1650,32 @@ public sealed class StatusPollerTests : IDisposable
                 timer.Fire();
             }
         }
+    }
+
+    private sealed class GatedTimeProvider : TimeProvider, IDisposable
+    {
+        private readonly ManualResetEventSlim _timerCreationReleased = new();
+
+        public TaskCompletionSource TimerCreationStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool TimerCreated { get; private set; }
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            TimerCreationStarted.TrySetResult();
+            _timerCreationReleased.Wait(TimeSpan.FromSeconds(1));
+            TimerCreated = true;
+            return new RecordingTimer(callback, state, dueTime, period);
+        }
+
+        public void ReleaseTimerCreation() => _timerCreationReleased.Set();
+
+        public void Dispose() => _timerCreationReleased.Dispose();
     }
 
     private sealed class RecordingTimer(

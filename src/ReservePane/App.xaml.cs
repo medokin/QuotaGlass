@@ -131,10 +131,16 @@ public partial class App : System.Windows.Application
             ApplyOverlaySettings(settings);
             _settingsStore.Changed += OnSettingsChanged;
 
-            _pollLoop = _activityCoordinator.Start(_applicationCancellation.Token);
+            PollLoopRun pollLoop = _activityCoordinator.Start(_applicationCancellation.Token);
+            _pollLoop = pollLoop.Completion;
             _pollLoopObservation = _pollLoopFaultObserver.ObserveAsync(
                 _pollLoop,
                 _applicationCancellation.Token);
+            await pollLoop.Ready;
+
+            new ApplicationStartupNotification(
+                _toast.ShowApplicationStarted,
+                _log).Show();
         }
         catch (OperationCanceledException) when (_applicationCancellation.IsCancellationRequested)
         {

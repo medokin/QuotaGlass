@@ -16,6 +16,8 @@ internal interface IHotkeyRegistration : IDisposable
 
 internal readonly record struct ActivityCadenceSnapshot(long Version, bool IsReducedCadence);
 
+internal readonly record struct PollLoopRun(Task Completion, Task Ready);
+
 internal interface IActivityCadenceSource
 {
     ActivityCadenceSnapshot Current { get; }
@@ -26,7 +28,7 @@ internal interface IActivityCadenceSource
 internal interface IActivityCadencePoller
 {
     void SetReducedCadence(bool reduced);
-    Task RunAsync(CancellationToken cancellationToken);
+    PollLoopRun Start(CancellationToken cancellationToken);
     void RequestRefresh();
 }
 
@@ -51,7 +53,7 @@ internal sealed class ApplicationActivityCoordinator : IDisposable
         _log = log ?? throw new ArgumentNullException(nameof(log));
     }
 
-    public Task Start(CancellationToken cancellationToken)
+    public PollLoopRun Start(CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -73,7 +75,7 @@ internal sealed class ApplicationActivityCoordinator : IDisposable
             }
 
             ApplySnapshot(initial);
-            Task pollLoop = _poller.RunAsync(cancellationToken);
+            PollLoopRun pollLoop = _poller.Start(cancellationToken);
             _poller.RequestRefresh();
             return pollLoop;
         }
