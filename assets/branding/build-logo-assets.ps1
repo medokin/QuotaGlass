@@ -1,5 +1,5 @@
 param(
-    [string]$Source = (Join-Path $PSScriptRoot "quotaglass-logo.svg"),
+    [string]$Source = (Join-Path $PSScriptRoot "reservepane-logo.svg"),
     [string]$OutputDirectory = $PSScriptRoot
 )
 
@@ -33,9 +33,9 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 $outputPath = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $sourceUri = [Uri]::new($sourcePath).AbsoluteUri
-$masterPng = Join-Path $outputPath "quotaglass-logo-1024.png"
-$temporaryProfile = Join-Path ([System.IO.Path]::GetTempPath()) ("quotaglass-logo-" + [Guid]::NewGuid().ToString("N"))
-$temporaryMasterPng = Join-Path $temporaryProfile "quotaglass-logo-1024.png"
+$masterPng = Join-Path $outputPath "reservepane-logo-1024.png"
+$temporaryProfile = Join-Path ([System.IO.Path]::GetTempPath()) ("reservepane-logo-" + [Guid]::NewGuid().ToString("N"))
+$temporaryMasterPng = Join-Path $temporaryProfile "reservepane-logo-1024.png"
 
 New-Item -ItemType Directory -Path $temporaryProfile | Out-Null
 
@@ -68,17 +68,17 @@ import sys
 from PIL import Image
 
 output_directory = Path(sys.argv[1])
-master_path = output_directory / "quotaglass-logo-1024.png"
+master_path = output_directory / "reservepane-logo-1024.png"
 sizes = (16, 24, 32, 48, 64, 128, 256, 512)
 
 with Image.open(master_path) as master:
     source = master.convert("RGBA")
     for size in sizes:
         output = source.resize((size, size), Image.Resampling.LANCZOS)
-        output.save(output_directory / f"quotaglass-logo-{size}.png", optimize=True)
+        output.save(output_directory / f"reservepane-logo-{size}.png", optimize=True)
 
     source.save(
-        output_directory / "quotaglass.ico",
+        output_directory / "reservepane.ico",
         format="ICO",
         sizes=[(size, size) for size in (16, 24, 32, 48, 64, 128, 256)],
     )
@@ -95,7 +95,7 @@ finally {
     $temporaryName = [System.IO.Path]::GetFileName($resolvedTemporaryProfile)
 
     if ($resolvedTemporaryProfile.StartsWith($resolvedTemporaryRoot, [StringComparison]::OrdinalIgnoreCase) -and
-        $temporaryName.StartsWith("quotaglass-logo-", [StringComparison]::Ordinal)) {
+        $temporaryName.StartsWith("reservepane-logo-", [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $resolvedTemporaryProfile -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
