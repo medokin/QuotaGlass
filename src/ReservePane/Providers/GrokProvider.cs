@@ -89,7 +89,10 @@ public sealed class GrokProvider : IStatusProvider, IProviderAvailability
         {
             credential = ReadCredential();
         }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        catch (Exception exception) when (exception is
+            FileNotFoundException or
+            DirectoryNotFoundException or
+            InvalidDataException)
         {
             return new ProviderFetchResult(
                 ProviderFetchOutcome.NotConfigured,

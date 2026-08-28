@@ -159,11 +159,13 @@ public sealed class GrokProviderTests : IDisposable
         Assert.True(noStore);
     }
 
-    [Fact]
-    public async Task FetchAsync_UnauthorizedResponseReturnsAuthExpired()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task FetchAsync_RejectedCredentialReturnsAuthExpired(HttpStatusCode statusCode)
     {
         // Catches an expired Grok credential reported as a generic transport failure.
-        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(statusCode));
 
         ProviderFetchResult result = await CreateProvider(handler).FetchAsync(CancellationToken.None);
         ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
@@ -171,6 +173,7 @@ public sealed class GrokProviderTests : IDisposable
         Assert.Equal(ProviderFetchOutcome.AuthenticationRequired, result.Outcome);
         Assert.Equal(HealthState.AuthExpired, snapshot.Health);
         Assert.Equal("re-auth: run grok login", snapshot.Error);
+        Assert.Equal(statusCode, result.StatusCode);
     }
 
     [Fact]
@@ -243,9 +246,10 @@ public sealed class GrokProviderTests : IDisposable
             handler,
             percent => SeverityPolicy.FromPercent(percent, 80, 95));
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchSnapshotAsync(CancellationToken.None));
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
 
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -349,9 +353,10 @@ public sealed class GrokProviderTests : IDisposable
             handler,
             percent => SeverityPolicy.FromPercent(percent, 80, 95));
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => provider.FetchSnapshotAsync(CancellationToken.None));
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
 
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
         Assert.Equal(0, handler.RequestCount);
     }
 
