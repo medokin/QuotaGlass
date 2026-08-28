@@ -19,7 +19,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     private readonly Func<double?, Severity> _severityFromPercent;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, Stream> _openCredential;
-    private readonly Func<OpenCodeConsoleSettings?> _consoleSettings;
+    private readonly Func<string?> _getWorkspaceSelector;
     private readonly IOpenCodeConsoleAccountReader _consoleAccountReader;
     private readonly IOpenCodeConsoleGoClient _consoleClient;
     private readonly Func<string, bool> _credentialProbe;
@@ -56,7 +56,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         string credentialPath,
         HttpMessageHandler handler,
         Func<double?, Severity> severityFromPercent,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> getWorkspaceSelector,
         TimeProvider? timeProvider = null)
         : this(
             credentialPath,
@@ -64,7 +64,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             severityFromPercent,
             timeProvider,
             OpenCredentialStream,
-            consoleSettings,
+            getWorkspaceSelector,
             new OpenCodeConsoleAccountReader(),
             new OpenCodeConsoleGoClient(handler, severityFromPercent, timeProvider))
     {
@@ -76,7 +76,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> getWorkspaceSelector,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient)
         : this(
@@ -85,7 +85,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             severityFromPercent,
             timeProvider,
             openCredential,
-            consoleSettings,
+            getWorkspaceSelector,
             consoleAccountReader,
             consoleClient,
             CredentialFilePrerequisite.Probe,
@@ -99,7 +99,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         Func<double?, Severity> severityFromPercent,
         TimeProvider? timeProvider,
         Func<string, Stream> openCredential,
-        Func<OpenCodeConsoleSettings?> consoleSettings,
+        Func<string?> getWorkspaceSelector,
         IOpenCodeConsoleAccountReader consoleAccountReader,
         IOpenCodeConsoleGoClient consoleClient,
         Func<string, bool> credentialProbe,
@@ -110,7 +110,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         _severityFromPercent = severityFromPercent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _openCredential = openCredential;
-        _consoleSettings = consoleSettings;
+        _getWorkspaceSelector = getWorkspaceSelector;
         _consoleAccountReader = consoleAccountReader;
         _consoleClient = consoleClient;
         _credentialProbe = credentialProbe;
@@ -127,7 +127,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         bool available = CredentialFilePrerequisite.IsPresentOrIndeterminate(
             _credentialPath,
             _credentialProbe) ||
-            (_consoleSettings()?.Enabled == true && _commandAvailable("opencode"));
+            _commandAvailable("opencode");
         return Task.FromResult(available);
     }
 
@@ -157,10 +157,12 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
             return await FetchApiKeyAsync(apiKey, fetchedAt, cancellationToken).ConfigureAwait(false);
         }
 
-        OpenCodeConsoleSettings? consoleSettings = _consoleSettings();
-        return consoleSettings?.Enabled == true
-            ? await FetchConsoleAsync(consoleSettings, fetchedAt, cancellationToken).ConfigureAwait(false)
-            : NotConfigured(fetchedAt);
+        if (!_commandAvailable("opencode"))
+        {
+            return NotConfigured(fetchedAt);
+        }
+
+        return await FetchConsoleAsync(_getWorkspaceSelector(), fetchedAt, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ProviderFetchResult> FetchApiKeyAsync(
@@ -226,7 +228,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
     }
 
     private async Task<ProviderFetchResult> FetchConsoleAsync(
-        OpenCodeConsoleSettings settings,
+        string? workspaceSelector,
         DateTimeOffset fetchedAt,
         CancellationToken cancellationToken)
     {
@@ -254,7 +256,7 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
         }
 
         OpenCodeConsoleFetchResult result = await _consoleClient
-            .FetchAsync(current, cancellationToken, settings.WorkspaceSelector)
+            .FetchAsync(current, cancellationToken, workspaceSelector)
             .ConfigureAwait(false);
         if (result.Outcome != OpenCodeConsoleFetchOutcome.Success)
         {
@@ -263,13 +265,13 @@ public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
 
         if (result.Workspaces.IsEmpty)
         {
-            return settings.WorkspaceSelector is null
+            return workspaceSelector is null
                 ? NotConfigured(fetchedAt)
                 : SelectionRequired([], fetchedAt);
         }
 
         OpenCodeConsoleWorkspace? selected;
-        if (settings.WorkspaceSelector is string selector)
+        if (workspaceSelector is string selector)
         {
             selected = result.Workspaces.FirstOrDefault(workspace =>
                 string.Equals(workspace.Selector, selector, StringComparison.Ordinal));

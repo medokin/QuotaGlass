@@ -159,7 +159,7 @@ daemon being stopped is a normal state.
 ## 5. Data model
 
 ```csharp
-enum HealthState { Ok, Degraded, AuthExpired, Unreachable, Disabled }
+enum HealthState { Ok, Degraded, AuthExpired, Unreachable }
 enum Severity    { Normal, Warning, Critical }
 
 record UsageWindow(
@@ -219,7 +219,7 @@ settings or UI.
 
 ### 6.2 `Core\StatusPoller`
 
-Owns a `PeriodicTimer`. Each tick fans out to every enabled provider in parallel
+Owns a `PeriodicTimer`. Each tick fans out to every available provider in parallel
 with a 10 second per-provider timeout, assembles an immutable `StatusReport`, and
 raises an event. It is the single source of truth for current state.
 
@@ -277,7 +277,7 @@ Refresh now, Settings file, Exit.
 ### 6.6 `Core\Settings`
 
 JSON at `%APPDATA%\QuotaGlass\settings.json`, written atomically, reloaded on
-change. Fields: poll interval, idle interval, per-provider enabled flag, overlay
+change. Fields: poll interval, idle interval, overlay
 visible, overlay corner, overlay monitor id, overlay position, hotkey, warning
 and critical thresholds, autostart. A missing file yields documented defaults; a
 malformed file falls back to defaults without throwing.

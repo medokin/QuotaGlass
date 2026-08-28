@@ -15,7 +15,7 @@
 - Target `net10.0-windows10.0.19041.0`; Windows x64 is the only supported platform.
 - Use the installed .NET SDK 10.0.302.
 - Poll every 60 seconds normally and every 5 minutes while locked or both on battery and idle.
-- Give every provider a 10 second timeout and dispatch enabled providers in parallel.
+- Give every provider a 10 second timeout and dispatch available providers in parallel.
 - Use one configurable threshold pair, defaulting to warning 80 and critical 95, for severity, bar color, tray color, and alerts.
 - Compile the three providers into the application. Do not add discovery, assembly scanning, or config-driven provider types.
 - Read Claude and Codex credential files only. Never read or use refresh tokens and never write either credential file.
@@ -127,7 +127,7 @@ Expected: compilation fails because `QuotaGlass.Model` does not exist.
 Use these exact public shapes:
 
 ```csharp
-public enum HealthState { Ok, Degraded, AuthExpired, Unreachable, Disabled }
+public enum HealthState { Ok, Degraded, AuthExpired, Unreachable }
 public enum Severity { Normal, Warning, Critical }
 public enum AlertKind { Warning, Critical, LimitReached, AuthExpired }
 
@@ -512,7 +512,7 @@ public async Task LoadAsync_MissingFileReturnsDocumentedDefaults()
     Assert.Equal(80, settings.WarningPercent);
     Assert.Equal(95, settings.CriticalPercent);
     Assert.Equal("Ctrl+Alt+A", settings.Hotkey);
-    Assert.All(settings.Providers.Values, provider => Assert.True(provider.Enabled));
+    Assert.Equal(["claude", "codex", "ollama"], settings.Providers.Keys.Order());
 }
 
 [Fact]
@@ -554,7 +554,7 @@ Use these types:
 
 ```csharp
 public enum OverlayCorner { TopLeft, TopRight, BottomLeft, BottomRight, Custom }
-public sealed record ProviderSettings(bool Enabled);
+public sealed record ProviderSettings;
 public sealed record OverlayPosition(double X, double Y);
 
 public sealed record AppSettings(
@@ -574,9 +574,9 @@ public sealed record AppSettings(
         TimeSpan.FromSeconds(60),
         TimeSpan.FromMinutes(5),
         ImmutableDictionary<string, ProviderSettings>.Empty
-            .Add("claude", new(true))
-            .Add("codex", new(true))
-            .Add("ollama", new(true)),
+            .Add("claude", new())
+            .Add("codex", new())
+            .Add("ollama", new()),
         false,
         OverlayCorner.BottomRight,
         null,
@@ -588,7 +588,7 @@ public sealed record AppSettings(
 }
 ```
 
-These defaults are the only fallback values: 60 seconds, 5 minutes, all three providers enabled, overlay hidden, bottom-right corner, null monitor and position, `Ctrl+Alt+A`, 80, 95, and autostart false.
+These defaults are the only fallback values: 60 seconds, 5 minutes, all three built-in providers registered for discovery, overlay hidden, bottom-right corner, null monitor and position, `Ctrl+Alt+A`, 80, 95, and autostart false.
 
 `AppPaths.FromEnvironment()` must resolve:
 
@@ -730,7 +730,7 @@ public async Task PollOnceAsync_StartsProvidersBeforeEitherCompletes()
 }
 ```
 
-Pass a 20 millisecond timeout through the constructor's test-only timeout parameter and assert a blocking provider times out while production defaults to 10 seconds. Also test that disabled providers are never invoked and `RequestRefresh` wakes the timer without waiting for the next interval.
+Pass a 20 millisecond timeout through the constructor's test-only timeout parameter and assert a blocking provider times out while production defaults to 10 seconds. Also test that unavailable providers are never fetched and `RequestRefresh` wakes the timer without waiting for the next interval.
 
 - [ ] **Step 2: Write failing retention and cadence tests**
 
@@ -755,7 +755,7 @@ public StatusPoller(
     TimeSpan? providerTimeout = null)
 ```
 
-For each enabled provider, start `FetchAsync` immediately and apply a linked cancellation source plus a timeout source constructed as `new CancellationTokenSource(providerTimeout ?? TimeSpan.FromSeconds(10), timeProvider)`. Use `Task.WhenAll`. Provider-returned health states are valid results. Only thrown exceptions or timeout cancellation enter the consecutive-failure retention path. Compute staleness from the retained snapshot's `FetchedAt`; do not add mutable state to model records.
+For each available provider, start `FetchAsync` immediately and apply a linked cancellation source plus a timeout source constructed as `new CancellationTokenSource(providerTimeout ?? TimeSpan.FromSeconds(10), timeProvider)`. Use `Task.WhenAll`. Provider-returned health states are valid results. Only thrown exceptions or timeout cancellation enter the consecutive-failure retention path. Compute staleness from the retained snapshot's `FetchedAt`; do not add mutable state to model records.
 
 - [ ] **Step 5: Implement the run loop and immediate refresh**
 
@@ -794,7 +794,7 @@ Expected: all tests pass.
 
 - [ ] **Step 1: Write failing pure tray policy tests**
 
-Define `TrayState { Green, Amber, Red, Grey }`. Test that the worst percentage wins across providers, 80 maps amber, 95 maps red, all unreachable or disabled maps grey, and a mix of unreachable plus a healthy provider below 80 maps green. `AuthExpired` and `Degraded` map red even with no windows.
+Define `TrayState { Green, Amber, Red, Grey }`. Test that the worst percentage wins across providers, 80 maps amber, 95 maps red, all unreachable maps grey, and a mix of unreachable plus a healthy provider below 80 maps green. `AuthExpired` and `Degraded` map red even with no windows.
 
 - [ ] **Step 2: Write failing autostart tests against an abstraction**
 
@@ -906,7 +906,7 @@ Expected: tests pass and XAML compiles.
 
 - [ ] **Step 1: Write failing registry and tooltip tests**
 
-Assert the registry always returns exactly `claude`, `codex`, and `ollama` in that order; enablement remains the poller's responsibility so settings reloads do not rebuild HTTP handlers. Test tooltip formatting produces one line per provider containing provider label plus worst percentage only, omits plans and reset text, and never exceeds 127 UTF-16 characters including line breaks. Truncation must end with three ASCII dots.
+Assert the registry always returns exactly `claude`, `codex`, and `ollama` in that order; availability remains each provider's responsibility so settings reloads do not rebuild HTTP handlers. Test tooltip formatting produces one line per provider containing provider label plus worst percentage only, omits plans and reset text, and never exceeds 127 UTF-16 characters including line breaks. Truncation must end with three ASCII dots.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -937,7 +937,7 @@ Remove `StartupUri`. In `App.OnStartup`:
 1. Resolve paths and load settings.
 2. Create logging, provider registry, watcher, poller, windows, toast, hotkey, activity monitor, and tray host in that order.
 3. Apply saved overlay visibility without activating it.
-4. Wire settings changes to thresholds, provider enablement, hotkey re-registration, overlay placement, and poll cadence. Recreate stateful threshold watcher only when threshold values change.
+4. Wire settings changes to thresholds, hotkey re-registration, overlay placement, and poll cadence. Recreate stateful threshold watcher only when threshold values change.
 5. Wire hotkey to overlay visibility and activity state to `SetReducedCadence`.
 6. Start `StatusPoller.RunAsync` and request the first poll immediately.
 

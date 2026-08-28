@@ -30,7 +30,7 @@ public static class TrayStatusPolicy
                 return TrayState.Red;
             }
 
-            if (provider.Health is HealthState.Unreachable or HealthState.Disabled)
+            if (provider.Health == HealthState.Unreachable)
             {
                 continue;
             }

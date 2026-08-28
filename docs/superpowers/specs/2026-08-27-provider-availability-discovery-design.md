@@ -6,7 +6,7 @@ Replace persisted provider enable flags with runtime discovery of each built-in 
 
 ## Scope
 
-- Remove `ProviderSettings.Enabled` while preserving `OpenCodeConsoleSettings` and unrelated application settings when old settings files are loaded and saved.
+- Remove `ProviderSettings.Enabled` and `OpenCodeConsoleSettings.Enabled` while preserving the optional workspace selector and unrelated application settings when old settings files are loaded and saved.
 - Re-evaluate availability before every provider poll.
 - Cover Claude, Codex, OpenCode Go, OpenCode Company Seat, and Ollama.
 - Keep authentication failures and remote endpoint failures separate from local unavailability.
@@ -26,7 +26,7 @@ Providers used by tests or future extensions that implement only `IStatusProvide
 | --- | --- | --- |
 | Claude | The configured Claude credential file exists | The credential file is absent |
 | Codex | The configured Codex authentication file exists | The authentication file is absent |
-| OpenCode Go | The OpenCode API credential file exists, or OpenCode Console fallback is enabled and the local `opencode` command is discoverable | Neither local credential path is usable |
+| OpenCode Go | The OpenCode API credential file exists, or the local `opencode` command is discoverable for automatic Console fallback | Neither local credential path is usable |
 | OpenCode Company Seat | The local `opencode` command is discoverable | The command is absent |
 | Ollama | The local Ollama version endpoint accepts a connection and returns an HTTP response | The local service cannot be reached |
 
@@ -34,9 +34,7 @@ Credential contents are not validated by availability discovery. Invalid, expire
 
 ## Settings Migration
 
-`ProviderSettings` retains only OpenCode Console configuration. The JSON serializer ignores legacy `Enabled` properties when reading existing files. Default settings contain entries for every built-in provider, including OpenCode Company Seat. Normalization preserves OpenCode Console settings and unknown provider entries, and all subsequent writes omit `Enabled`.
-
-The OpenCode Console `Enabled` option remains independent. It controls whether OpenCode Go may use Console credentials as a fallback and is not a provider visibility flag.
+`ProviderSettings` retains only the optional OpenCode Console workspace selector. The JSON serializer ignores legacy `Enabled` properties when reading existing files. Default settings contain entries for every built-in provider, including OpenCode Company Seat. Normalization preserves the selector and unknown provider entries, and all subsequent writes omit `Enabled`.
 
 ## Polling and State Transitions
 
@@ -52,7 +50,7 @@ The popup, overlay, and tray tooltip already consume the providers in `StatusRep
 
 ## Testing
 
-- Settings tests load legacy true and false values, preserve OpenCode Console configuration, and verify new writes omit `Enabled`.
+- Settings tests load legacy true and false values, preserve the OpenCode Console workspace selector, and verify new writes omit `Enabled` at every provider configuration level.
 - Provider tests cover available and unavailable local prerequisites for all five built-ins.
 - Poller tests cover skipped fetches, runtime availability changes, unavailable-provider omission, and sanitized discovery failures.
 - Poller tests cover `NotConfigured` omission and rediscovery, non-cooperative probe cleanup, and caller-cancellation races.

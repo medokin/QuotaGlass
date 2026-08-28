@@ -18,7 +18,6 @@ public static class ProviderDisplayText
             HealthState.Degraded => "Provider data is degraded",
             HealthState.AuthExpired => "Authentication expired",
             HealthState.Unreachable => "Provider is unreachable",
-            HealthState.Disabled => "Provider is disabled",
             _ => string.Empty,
         };
     }

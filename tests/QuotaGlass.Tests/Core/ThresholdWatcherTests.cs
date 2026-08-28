@@ -141,17 +141,17 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
-    public void Evaluate_DisabledProviderRetainsFiredCycleKeyUntilSameCycleReturns()
+    public void Evaluate_UnreachableProviderRetainsFiredCycleKeyUntilSameCycleReturns()
     {
-        // Break caught: disabling and re-enabling a provider repeats an alert in the same quota cycle.
+        // Break caught: a transiently unreachable provider repeats an alert in the same quota cycle.
         var watcher = new ThresholdWatcher(80, 95);
         DateTimeOffset cycle = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
         StatusReport warning = Report(80, cycle);
-        StatusReport disabled = Report("claude", "Claude", HealthState.Disabled, []);
+        StatusReport unreachable = Report("claude", "Claude", HealthState.Unreachable, []);
 
         Assert.Equal(AlertKind.Warning, Assert.Single(watcher.Evaluate(Report(79, cycle), warning)).Kind);
-        Assert.Empty(watcher.Evaluate(warning, disabled));
-        Assert.Empty(watcher.Evaluate(disabled, warning));
+        Assert.Empty(watcher.Evaluate(warning, unreachable));
+        Assert.Empty(watcher.Evaluate(unreachable, warning));
     }
 
     [Fact]
@@ -169,19 +169,19 @@ public sealed class ThresholdWatcherTests
     }
 
     [Fact]
-    public void Evaluate_KnownNewCycleRetiresFiredKeyAfterDisabledSnapshot()
+    public void Evaluate_KnownNewCycleRetiresFiredKeyAfterUnreachableSnapshot()
     {
-        // Break caught: preserving keys across disabled snapshots prevents a known replacement cycle from alerting.
+        // Break caught: preserving keys across unreachable snapshots prevents a known replacement cycle from alerting.
         var watcher = new ThresholdWatcher(80, 95);
         DateTimeOffset first = DateTimeOffset.Parse("2026-08-29T01:59:59Z");
         DateTimeOffset second = first.AddDays(7);
-        StatusReport disabled = Report("claude", "Claude", HealthState.Disabled, []);
+        StatusReport unreachable = Report("claude", "Claude", HealthState.Unreachable, []);
 
         Assert.Equal(AlertKind.Warning,
             Assert.Single(watcher.Evaluate(Report(79, first), Report(80, first))).Kind);
-        Assert.Empty(watcher.Evaluate(Report(80, first), disabled));
+        Assert.Empty(watcher.Evaluate(Report(80, first), unreachable));
         Assert.Equal(AlertKind.Warning,
-            Assert.Single(watcher.Evaluate(disabled, Report(80, second))).Kind);
+            Assert.Single(watcher.Evaluate(unreachable, Report(80, second))).Kind);
     }
 
     [Fact]

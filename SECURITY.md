@@ -15,7 +15,8 @@ Include reproduction steps, impact, and the affected revision when possible.
 
 ## Credential handling
 
-QuotaGlass reads existing Claude Code and Codex CLI credentials only when their
-providers are enabled. It does not modify credential files or refresh tokens.
+QuotaGlass reads only the required fields from existing provider credentials
+after discovering the corresponding local prerequisite. It does not modify
+credential files or refresh tokens.
 Logs intentionally exclude exception messages, request and response headers,
 response bodies, credentials, and account identifiers.

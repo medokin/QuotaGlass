@@ -14,24 +14,22 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     private readonly TemporaryDirectory _directory = new();
 
     [Theory]
-    [InlineData(true, false, false, true)]
-    [InlineData(false, true, true, true)]
-    [InlineData(false, true, false, false)]
-    [InlineData(false, false, true, false)]
-    public async Task IsAvailableAsync_UsesCredentialOrEnabledConsoleCommand(
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    public async Task IsAvailableAsync_UsesCredentialOrConsoleCommand(
         bool credentialExists,
-        bool consoleEnabled,
         bool commandAvailable,
         bool expected)
     {
-        // Catches discovery parsing credentials or enabling Console fallback without its local command.
+        // Catches discovery parsing credentials or requiring persisted settings for Console discovery.
         var provider = new OpenCodeGoProvider(
             "opencode-auth.json",
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
             SeverityFromPercent,
             null,
             _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
-            () => new OpenCodeConsoleSettings(consoleEnabled, null),
+            () => null,
             new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
             new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
             path => path == "opencode-auth.json" && credentialExists,
@@ -46,14 +44,14 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     [Fact]
     public async Task IsAvailableAsync_CredentialSecurityFailureRemainsAvailable()
     {
-        // Catches a credential security failure falling through to disabled Console discovery.
+        // Catches a credential security failure falling through to Console command discovery.
         var provider = new OpenCodeGoProvider(
             "opencode-auth.json",
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
             SeverityFromPercent,
             null,
             _ => throw new Xunit.Sdk.XunitException("Credential contents must not be read"),
-            () => new OpenCodeConsoleSettings(false, null),
+            () => null,
             new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
             new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
             _ => throw new System.Security.SecurityException("credential-path-must-not-be-reported"),
@@ -135,7 +133,12 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         var provider = new OpenCodeGoProvider(
             Path.Combine(_directory.Path, "missing-auth.json"),
             handler,
-            SeverityFromPercent);
+            SeverityFromPercent,
+            null,
+            OpenCodeGoProvider.OpenCredentialStream,
+            () => null,
+            new StubAccountReader(() => []),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")));
 
         ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
         ProviderSnapshot snapshot = Assert.IsType<ProviderSnapshot>(result.Snapshot);
@@ -156,7 +159,12 @@ public sealed class OpenCodeGoProviderTests : IDisposable
         // Catches unrelated or incomplete OpenCode auth entries being used as bearer credentials.
         var handler = new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run"));
 
-        ProviderFetchResult result = await CreateProvider(handler, credential).FetchAsync(CancellationToken.None);
+        ProviderFetchResult result = await CreateConsoleProvider(
+            handler,
+            null,
+            new StubAccountReader(() => []),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            credential).FetchAsync(CancellationToken.None);
 
         Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
         Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
@@ -340,9 +348,9 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_ApiKeyTakesPrecedenceOverEnabledConsoleDiscovery()
+    public async Task FetchAsync_ApiKeyTakesPrecedenceOverConsoleDiscovery()
     {
-        // Catches the opt-in Console path replacing the stable API-key contract.
+        // Catches automatic Console discovery replacing the stable API-key contract.
         var handler = new StubHttpMessageHandler(_ => JsonResponse(ReadFixture("opencode-go-usage.json")));
         var accountReader = new StubAccountReader(() => throw new Xunit.Sdk.XunitException(
             "Console discovery must not run when an API key is configured."));
@@ -350,7 +358,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             "Console HTTP must not run when an API key is configured."));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             handler,
-            new OpenCodeConsoleSettings(true, null),
+            null,
             accountReader,
             consoleClient,
             credential: """
@@ -364,14 +372,38 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchAsync_EnabledConsoleWithOneEligibleWorkspacePublishesUsage()
+    public async Task FetchAsync_NoApiKeyAndConsoleCommandUnavailable_ReturnsNotConfigured()
     {
+        // Catches direct fetches invoking Console account discovery without its local prerequisite.
+        string credentialPath = _directory.WriteFile("opencode-no-console-auth.json", "{}");
+        var provider = new OpenCodeGoProvider(
+            credentialPath,
+            new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("HTTP must not run")),
+            SeverityFromPercent,
+            null,
+            OpenCodeGoProvider.OpenCredentialStream,
+            () => null,
+            new StubAccountReader(() => throw new Xunit.Sdk.XunitException("Accounts must not be read")),
+            new StubConsoleClient(() => throw new Xunit.Sdk.XunitException("Console HTTP must not run")),
+            _ => false,
+            _ => false);
+
+        ProviderFetchResult result = await provider.FetchAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderFetchOutcome.NotConfigured, result.Outcome);
+        Assert.Equal(HealthState.Unreachable, Assert.IsType<ProviderSnapshot>(result.Snapshot).Health);
+    }
+
+    [Fact]
+    public async Task FetchAsync_NoApiKeyAndNoConsoleSettings_DiscoversOneWorkspaceUsage()
+    {
+        // Catches automatic Console discovery requiring a persisted settings object.
         var workspace = new OpenCodeConsoleWorkspace(
             new string('a', 64),
             [new UsageWindow("rolling", 42, DateTimeOffset.Parse("2026-08-27T12:00:00Z"), Severity.Normal)]);
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("API-key HTTP must not run")),
-            new OpenCodeConsoleSettings(true, null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             new StubConsoleClient(() => new OpenCodeConsoleFetchResult(
                 OpenCodeConsoleFetchOutcome.Success,
@@ -400,12 +432,12 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
         ProviderFetchResult unselected = await CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(true, null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             client).FetchAsync(CancellationToken.None);
         ProviderFetchResult selected = await CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(true, second.Selector),
+            second.Selector,
             new StubAccountReader(() => [ConsoleAccount()]),
             client).FetchAsync(CancellationToken.None);
 
@@ -428,7 +460,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             "Expired Console tokens must not be sent."));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(true, null),
+            null,
             new StubAccountReader(() => [expired]),
             client);
 
@@ -449,7 +481,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             HttpStatusCode.NotFound));
         OpenCodeGoProvider provider = CreateConsoleProvider(
             new StubHttpMessageHandler(_ => throw new Xunit.Sdk.XunitException("Unexpected HTTP")),
-            new OpenCodeConsoleSettings(true, null),
+            null,
             new StubAccountReader(() => [ConsoleAccount()]),
             client);
 
@@ -481,7 +513,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
 
     private OpenCodeGoProvider CreateConsoleProvider(
         HttpMessageHandler handler,
-        OpenCodeConsoleSettings settings,
+        string? workspaceSelector,
         IOpenCodeConsoleAccountReader accountReader,
         IOpenCodeConsoleGoClient consoleClient,
         string credential = "{}")
@@ -493,9 +525,11 @@ public sealed class OpenCodeGoProviderTests : IDisposable
             SeverityFromPercent,
             new FixedTimeProvider(DateTimeOffset.Parse("2026-08-27T00:00:00Z")),
             OpenCodeGoProvider.OpenCredentialStream,
-            () => settings,
+            () => workspaceSelector,
             accountReader,
-            consoleClient);
+            consoleClient,
+            File.Exists,
+            command => command == "opencode");
     }
 
     private static OpenCodeConsoleAccount ConsoleAccount() => new(

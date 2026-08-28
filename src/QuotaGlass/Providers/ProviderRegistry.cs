@@ -27,7 +27,7 @@ public sealed class ProviderRegistry : IDisposable
                 paths.OpenCodeAuthPath,
                 handlers[2],
                 SeverityFromPercent,
-                () => GetOpenCodeConsoleSettings(_settings())),
+                () => GetOpenCodeConsoleWorkspaceSelector(_settings())),
             new OpenCodeCompanySeatProvider(handlers[3], SeverityFromPercent),
             new OllamaProvider(handlers[4]),
         ];
@@ -94,8 +94,8 @@ public sealed class ProviderRegistry : IDisposable
         PooledConnectionLifetime = ConnectionLifetime,
     };
 
-    private static OpenCodeConsoleSettings? GetOpenCodeConsoleSettings(AppSettings settings) =>
+    private static string? GetOpenCodeConsoleWorkspaceSelector(AppSettings settings) =>
         settings.Providers.TryGetValue("opencode-go", out ProviderSettings? provider)
-            ? provider.OpenCodeConsole
+            ? provider.OpenCodeConsole?.WorkspaceSelector
             : null;
 }
