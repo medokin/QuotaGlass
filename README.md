@@ -4,7 +4,7 @@
 
 <h1 align="center">ReservePane</h1>
 
-ReservePane is a Windows tray application that shows Claude, Codex, OpenCode,
+ReservePane is a Windows tray application that shows Claude, Codex, Grok, OpenCode,
 OpenCode Go, and Ollama status at a glance. It displays current usage windows in a tray
 popup, can keep an optional overlay above other windows, and raises
 notifications when usage crosses configured thresholds.
@@ -17,7 +17,7 @@ notifications when usage crosses configured thresholds.
 
 ## Features
 
-- Claude, Codex, OpenCode Company Seat, and OpenCode Go usage windows
+- Claude, Codex, Grok, OpenCode Company Seat, and OpenCode Go usage windows
 - Local Ollama version and running-model status
 - Tray status based on the most urgent provider state
 - Optional movable, always-on-top overlay
@@ -28,13 +28,13 @@ notifications when usage crosses configured thresholds.
 ## Requirements
 
 - Windows 10 version 2004 or newer on x64
-- Claude Code, Codex CLI, and/or OpenCode already authenticated for their
-  respective cards
+- Claude Code, Codex CLI, Grok CLI, and/or OpenCode already authenticated for
+  their respective cards
 - Ollama running locally for the Ollama card
 
 ReservePane reads only the required credential fields from files created by
-Claude Code, Codex CLI, and OpenCode. It does not write those files, refresh
-tokens, or log credentials, account identifiers, or API response bodies.
+Claude Code, Codex CLI, Grok CLI, and OpenCode. It does not write those files,
+refresh tokens, or log credentials, account identifiers, or API response bodies.
 Providers are discovered from their local prerequisites. Providers that are not
 configured or installed remain hidden.
 

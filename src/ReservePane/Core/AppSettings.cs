@@ -39,6 +39,7 @@ public sealed record AppSettings(
         ImmutableDictionary<string, ProviderSettings>.Empty
             .Add("claude", new ProviderSettings())
             .Add("codex", new ProviderSettings())
+            .Add("grok", new ProviderSettings())
             .Add("opencode-go", new ProviderSettings())
             .Add("opencode-company-seat", new ProviderSettings())
             .Add("ollama", new ProviderSettings()),

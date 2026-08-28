@@ -19,6 +19,7 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | LIVE-01 | Initial Claude card shows the live plan label and every returned usage window. |  |  |  |
 | LIVE-02 | Initial Codex card shows the live plan label and every returned usage window. |  |  |  |
 | LIVE-03 | Initial Ollama card shows the daemon version and loaded-model count. |  |  |  |
+| LIVE-04 | Initial Grok card shows the live plan label and every returned usage window. |  |  |  |
 | TRAY-01 | Tray is green when every reachable provider is below the warning threshold. |  |  |  |
 | TRAY-02 | Tray is amber at the warning threshold. |  |  |  |
 | TRAY-03 | Tray is red at the critical threshold. |  |  |  |
@@ -58,7 +59,8 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | POLL-06 | An RDP reconnect keeps the application responsive and polling. |  |  |  |
 | AUTH-01 | An expired Claude token shows `re-auth: run claude login`, raises one toast, then remains silent until state changes. |  |  |  |
 | AUTH-02 | An expired Codex token shows `re-auth: run codex login`, raises one toast, then remains silent until state changes. |  |  |  |
-| AUTH-03 | Claude and Codex credential files have identical before-and-after SHA-256 digests. |  |  |  |
+| AUTH-03 | Claude, Codex, and Grok credential files have identical before-and-after SHA-256 digests. |  |  |  |
+| AUTH-04 | An expired Grok token shows `re-auth: run grok login`, raises one toast, then remains silent until state changes. |  |  |  |
 | OLLAMA-01 | A stopped Ollama daemon appears silently unreachable with no toast. |  |  |  |
 | OLLAMA-02 | Ollama recovers after its daemon starts. |  |  |  |
 | LOG-01 | `log.txt` rotates once at 1,048,576 bytes and both retained files stay within the cap. |  |  |  |
