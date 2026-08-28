@@ -33,6 +33,16 @@ public sealed class ToastNotifier
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
     }
 
+    public void ShowApplicationStarted()
+    {
+        ToastContent content = new ToastContentBuilder()
+            .AddText("ReservePane")
+            .AddText("ReservePane is running in the system tray.")
+            .GetToastContent();
+
+        _publisher.Show(content);
+    }
+
     public void Show(StatusAlert alert)
     {
         ArgumentNullException.ThrowIfNull(alert);

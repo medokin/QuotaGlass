@@ -23,6 +23,7 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | TRAY-02 | Tray is amber at the warning threshold. |  |  |  |
 | TRAY-03 | Tray is red at the critical threshold. |  |  |  |
 | TRAY-04 | Tray is grey when every visible provider is unreachable. |  |  |  |
+| TRAY-05 | Every successful application launch displays one notification stating that ReservePane is running in the system tray. |  |  |  |
 | ALERT-01 | A first-run value at 95 percent raises exactly one critical toast. |  |  |  |
 | ALERT-02 | Refreshing an unchanged 95 percent cycle does not repeat the toast. |  |  |  |
 | ALERT-03 | Moving the reset timestamp to a later fixture or clock-controlled cycle re-arms the alert. |  |  |  |

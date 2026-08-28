@@ -181,9 +181,10 @@ public sealed class ApplicationCompositionTests : IDisposable
         }
 
         using var coordinator = new ApplicationActivityCoordinator(activity, poller, CreateLog());
-        Task rawPollLoop = coordinator.Start(CancellationToken.None);
+        PollLoopRun pollLoop = coordinator.Start(CancellationToken.None);
 
-        Assert.Same(poller.RawPollLoop, rawPollLoop);
+        Assert.Same(poller.RawPollLoop, pollLoop.Completion);
+        Assert.Same(poller.Ready, pollLoop.Ready);
         Assert.True(poller.IsReducedCadence);
         Assert.Equal(expectedRefreshes, poller.RefreshCount);
     }
@@ -535,6 +536,7 @@ public sealed class ApplicationCompositionTests : IDisposable
         public bool IsReducedCadence { get; private set; }
         public int RefreshCount { get; private set; }
         public Task RawPollLoop { get; } = new TaskCompletionSource().Task;
+        public Task Ready { get; } = Task.CompletedTask;
 
         public void SetReducedCadence(bool reduced)
         {
@@ -551,11 +553,11 @@ public sealed class ApplicationCompositionTests : IDisposable
             }
         }
 
-        public Task RunAsync(CancellationToken cancellationToken)
+        public PollLoopRun Start(CancellationToken cancellationToken)
         {
             _running = true;
             AfterRunStarted?.Invoke();
-            return RawPollLoop;
+            return new PollLoopRun(RawPollLoop, Ready);
         }
 
         public void RequestRefresh() => RefreshCount++;

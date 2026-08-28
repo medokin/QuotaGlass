@@ -110,6 +110,11 @@ public sealed class StatusPoller : IActivityCadencePoller
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        await Start(cancellationToken).Completion.ConfigureAwait(false);
+    }
+
+    internal PollLoopRun Start(CancellationToken cancellationToken)
+    {
         lock (_cadenceGate)
         {
             if (_runActive != 0)
@@ -120,11 +125,25 @@ public sealed class StatusPoller : IActivityCadencePoller
             Volatile.Write(ref _runActive, 1);
         }
 
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task completion = RunAsyncCore(cancellationToken, ready);
+        return new PollLoopRun(
+            completion,
+            WaitForReadinessAsync(ready.Task, completion, cancellationToken));
+    }
+
+    PollLoopRun IActivityCadencePoller.Start(CancellationToken cancellationToken) =>
+        Start(cancellationToken);
+
+    private async Task RunAsyncCore(
+        CancellationToken cancellationToken,
+        TaskCompletionSource ready)
+    {
         try
         {
             // The loop owns cancellation so it always reaches notification drain and cleanup.
             await Task.Run(
-                () => RunLoopAsync(cancellationToken),
+                () => RunLoopAsync(cancellationToken, ready),
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -136,13 +155,16 @@ public sealed class StatusPoller : IActivityCadencePoller
         }
     }
 
-    private async Task RunLoopAsync(CancellationToken cancellationToken)
+    private async Task RunLoopAsync(
+        CancellationToken cancellationToken,
+        TaskCompletionSource ready)
     {
         PeriodicTimer? timer = null;
         try
         {
             TimeSpan cadence = GetCadence();
             timer = new PeriodicTimer(cadence, _timeProvider);
+            ready.TrySetResult();
 
             while (true)
             {
@@ -181,6 +203,24 @@ public sealed class StatusPoller : IActivityCadencePoller
             timer?.Dispose();
             await GetNotificationPump().ConfigureAwait(false);
         }
+    }
+
+    private static async Task WaitForReadinessAsync(
+        Task ready,
+        Task completion,
+        CancellationToken cancellationToken)
+    {
+        Task completed = await Task.WhenAny(ready, completion)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (completed == ready)
+        {
+            return;
+        }
+
+        await completion.ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("The status poller stopped before initialization completed.");
     }
 
     public void RequestRefresh()

@@ -8,6 +8,19 @@ namespace ReservePane.Tests.Platform;
 public sealed class ToastNotifierTests
 {
     [Fact]
+    public void ShowApplicationStarted_BuildsApplicationAndTrayConfirmation()
+    {
+        var publisher = new FakeToastPublisher();
+        var notifier = new ToastNotifier(publisher);
+
+        notifier.ShowApplicationStarted();
+
+        Assert.Equal(
+            ["ReservePane", "ReservePane is running in the system tray."],
+            ReadText(publisher.Content!));
+    }
+
+    [Fact]
     public void Show_BuildsProviderMessageAndResetTimeWithoutDisplayingToast()
     {
         var publisher = new FakeToastPublisher();
