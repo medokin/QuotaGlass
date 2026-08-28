@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/medokin/ReservePane/compare/v0.1.2...v0.2.0) (2026-08-28)
+
+
+### Features
+
+* **branding:** rename quotaglass to reservepane ([20ab1bd](https://github.com/medokin/ReservePane/commit/20ab1bdb3c6076594ae57e2f0a910183ee7110ac))
+
 ## [0.1.2](https://github.com/medokin/QuotaGlass/compare/v0.1.1...v0.1.2) (2026-08-28)
 
 
