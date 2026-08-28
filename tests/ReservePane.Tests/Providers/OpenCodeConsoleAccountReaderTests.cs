@@ -249,6 +249,90 @@ public sealed class OpenCodeConsoleAccountReaderTests
         Assert.DoesNotContain(stderr, exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunWithDatabaseBusyRetryAsync_DatabaseBusyIsRetriedUntilItSucceeds()
+    {
+        // Break caught: a SQLite lock held by a running opencode instance discards valid quota data.
+        int attempts = 0;
+
+        byte[]? output = await OpenCodeConsoleAccountReader.RunWithDatabaseBusyRetryAsync(
+            (_, _) =>
+            {
+                attempts++;
+                if (attempts == 1)
+                {
+                    throw OpenCodeCommandException.FromStderr(126, "database is locked");
+                }
+
+                return Task.FromResult<byte[]?>(Encoding.UTF8.GetBytes("[]"));
+            },
+            "select 1;",
+            CancellationToken.None);
+
+        Assert.Equal(2, attempts);
+        Assert.Equal("[]", Encoding.UTF8.GetString(output!));
+    }
+
+    [Fact]
+    public async Task RunWithDatabaseBusyRetryAsync_GivesUpAfterMaximumAttempts()
+    {
+        // Break caught: an eternal lock retrying forever or a non-busy failure being retried.
+        int attempts = 0;
+
+        OpenCodeCommandException exception = await Assert.ThrowsAsync<OpenCodeCommandException>(
+            () => OpenCodeConsoleAccountReader.RunWithDatabaseBusyRetryAsync(
+                (_, _) =>
+                {
+                    attempts++;
+                    throw OpenCodeCommandException.FromStderr(126, "database is locked");
+                },
+                "select 1;",
+                CancellationToken.None));
+
+        Assert.Equal(OpenCodeCommandFailure.DatabaseBusy, exception.Failure);
+        Assert.Equal(3, attempts);
+    }
+
+    [Fact]
+    public async Task RunWithDatabaseBusyRetryAsync_OtherFailuresAreNotRetried()
+    {
+        // Break caught: a non-busy failure being retried and duplicating side effects.
+        int attempts = 0;
+
+        OpenCodeCommandException exception = await Assert.ThrowsAsync<OpenCodeCommandException>(
+            () => OpenCodeConsoleAccountReader.RunWithDatabaseBusyRetryAsync(
+                (_, _) =>
+                {
+                    attempts++;
+                    throw OpenCodeCommandException.FromStderr(1, "unexpected local failure");
+                },
+                "select 1;",
+                CancellationToken.None));
+
+        Assert.Equal(OpenCodeCommandFailure.Failed, exception.Failure);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task RunWithDatabaseBusyRetryAsync_CancellationStopsTheRetry()
+    {
+        // Break caught: a canceled poll continuing to spawn locked-database command attempts.
+        int attempts = 0;
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => OpenCodeConsoleAccountReader.RunWithDatabaseBusyRetryAsync(
+                (_, token) =>
+                {
+                    attempts++;
+                    cancellation.Cancel();
+                    token.ThrowIfCancellationRequested();
+                    return Task.FromResult<byte[]?>(null);
+                },
+                "select 1;",
+                cancellation.Token));
+    }
+
     private static OpenCodeConsoleAccountReader Reader(string json) => new(
         (_, _) => Task.FromResult<byte[]?>(Encoding.UTF8.GetBytes(json)));
 }

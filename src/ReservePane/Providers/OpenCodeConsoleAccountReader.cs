@@ -19,6 +19,7 @@ internal interface IOpenCodeConsoleAccountReader
 internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountReader
 {
     private const int MaximumAccounts = 32;
+    private const int MaximumDatabaseBusyAttempts = 3;
     private const string ConsoleUrl = "https://opencode.ai/console";
     private const string AccountQuery =
         "select a.id, a.url, a.access_token, a.token_expiry " +
@@ -147,6 +148,36 @@ internal sealed class OpenCodeConsoleAccountReader : IOpenCodeConsoleAccountRead
             cancellationToken).ConfigureAwait(false);
 
     internal static async Task<byte[]?> RunQueryAsync(
+        string query,
+        EffectiveCommandEnvironment environment,
+        CancellationToken cancellationToken) => await RunWithDatabaseBusyRetryAsync(
+            (currentQuery, token) => RunQueryOnceAsync(currentQuery, environment, cancellationToken),
+            query,
+            cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<byte[]?> RunWithDatabaseBusyRetryAsync(
+        Func<string, CancellationToken, Task<byte[]?>> runOnce,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await runOnce(query, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OpenCodeCommandException exception)
+                when (exception.Failure == OpenCodeCommandFailure.DatabaseBusy &&
+                    attempt < MaximumDatabaseBusyAttempts &&
+                    !cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task<byte[]?> RunQueryOnceAsync(
         string query,
         EffectiveCommandEnvironment environment,
         CancellationToken cancellationToken)
