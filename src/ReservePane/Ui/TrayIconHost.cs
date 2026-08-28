@@ -3,13 +3,13 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Text;
 using System.Windows.Threading;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Platform;
-using QuotaGlass.Providers;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Platform;
+using ReservePane.Providers;
 using Forms = System.Windows.Forms;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 public static class TrayTooltip
 {
@@ -234,7 +234,7 @@ internal sealed class WinFormsTrayIconView : ITrayIconView
         _menu.Opening += OnMenuOpening;
         _notifyIcon.ContextMenuStrip = _menu;
         _notifyIcon.MouseClick += OnMouseClick;
-        _notifyIcon.Text = "QuotaGlass";
+        _notifyIcon.Text = "ReservePane";
         State = TrayState.Grey;
     }
 

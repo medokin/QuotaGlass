@@ -1,4 +1,4 @@
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 public sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
 {

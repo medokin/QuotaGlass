@@ -3,13 +3,13 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
+using ReservePane.Core;
+using ReservePane.Model;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Point = System.Windows.Point;
 using Size = System.Windows.Size;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 public partial class OverlayWindow : Window, IOverlayStatusWindow
 {

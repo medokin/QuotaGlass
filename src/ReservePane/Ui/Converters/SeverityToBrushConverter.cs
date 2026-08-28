@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Windows.Data;
 using System.Windows.Media;
-using QuotaGlass.Model;
+using ReservePane.Model;
 using MediaColor = System.Windows.Media.Color;
 
-namespace QuotaGlass.Ui.Converters;
+namespace ReservePane.Ui.Converters;
 
 public sealed class SeverityToBrushConverter : IValueConverter
 {

@@ -1,4 +1,4 @@
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 internal sealed class OverlayDragState
 {

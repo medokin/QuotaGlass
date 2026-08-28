@@ -1,4 +1,4 @@
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class WpfStaCollection

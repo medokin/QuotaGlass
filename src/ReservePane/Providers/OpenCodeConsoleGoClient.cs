@@ -8,9 +8,9 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal enum OpenCodeConsoleFetchOutcome
 {

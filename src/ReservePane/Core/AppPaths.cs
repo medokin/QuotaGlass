@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 public sealed record AppPaths(
     string ClaudeCredentialsPath,
@@ -15,7 +15,7 @@ public sealed record AppPaths(
             ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         string appData = Environment.GetEnvironmentVariable("APPDATA")
             ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        string applicationDirectory = Path.Combine(appData, "QuotaGlass");
+        string applicationDirectory = Path.Combine(appData, "ReservePane");
 
         return new AppPaths(
             Path.Combine(userProfile, ".claude", ".credentials.json"),

@@ -1,9 +1,9 @@
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Tests.Support;
-using static QuotaGlass.Tests.Support.SnapshotFactory;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Tests.Support;
+using static ReservePane.Tests.Support.SnapshotFactory;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class ThresholdWatcherTests
 {

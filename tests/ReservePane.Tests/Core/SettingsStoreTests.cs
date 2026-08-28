@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using QuotaGlass.Core;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class SettingsStoreTests : IDisposable
 {

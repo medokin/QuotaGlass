@@ -1,8 +1,8 @@
 using System.Text;
 using System.IO;
-using QuotaGlass.Providers;
+using ReservePane.Providers;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 public enum LogArea
 {

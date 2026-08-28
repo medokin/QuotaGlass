@@ -1,7 +1,7 @@
-using QuotaGlass.Core;
-using QuotaGlass.Platform;
+using ReservePane.Core;
+using ReservePane.Platform;
 
-namespace QuotaGlass.Tests.Platform;
+namespace ReservePane.Tests.Platform;
 
 public sealed class ActivityStateMonitorTests
 {

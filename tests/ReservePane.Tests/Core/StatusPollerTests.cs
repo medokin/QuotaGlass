@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Net;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class StatusPollerTests : IDisposable
 {
@@ -1451,7 +1451,7 @@ public sealed class StatusPollerTests : IDisposable
             _thread = new Thread(Run)
             {
                 IsBackground = true,
-                Name = "QuotaGlass.Tests UI context",
+                Name = "ReservePane.Tests UI context",
             };
             _thread.Start();
             _ready.Task.Wait(TimeSpan.FromSeconds(2));

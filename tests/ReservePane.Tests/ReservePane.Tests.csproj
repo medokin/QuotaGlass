@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\QuotaGlass\QuotaGlass.csproj" />
+    <ProjectReference Include="..\..\src\ReservePane\ReservePane.csproj" />
   </ItemGroup>
 
 </Project>

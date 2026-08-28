@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
+using ReservePane.Core;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public sealed class ProviderRegistry : IDisposable
 {

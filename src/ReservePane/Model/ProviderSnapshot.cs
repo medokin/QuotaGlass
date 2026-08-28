@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace QuotaGlass.Model;
+namespace ReservePane.Model;
 
 public sealed record InfoLine(string Label, string Value);
 

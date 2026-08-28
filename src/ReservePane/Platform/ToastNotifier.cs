@@ -1,9 +1,9 @@
 using System.Globalization;
-using QuotaGlass.Model;
+using ReservePane.Model;
 using CommunityToolkit.WinUI.Notifications;
 using Windows.UI.Notifications;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal interface IToastPublisher
 {

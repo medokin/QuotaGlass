@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 
-namespace QuotaGlass.Ui.Converters;
+namespace ReservePane.Ui.Converters;
 
 public sealed class PercentToGridLengthConverter : IValueConverter
 {

@@ -2,7 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Point = System.Windows.Point;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 internal interface IPopupPositionOperation
 {

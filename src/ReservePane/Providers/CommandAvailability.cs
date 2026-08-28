@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public static class CommandAvailability
 {

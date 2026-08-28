@@ -2,13 +2,13 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Tests.Support;
-using QuotaGlass.Ui;
-using QuotaGlass.Ui.Converters;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Tests.Support;
+using ReservePane.Ui;
+using ReservePane.Ui.Converters;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 public sealed class DisplayConverterTests
 {

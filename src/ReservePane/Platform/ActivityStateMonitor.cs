@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
-using QuotaGlass.Core;
+using ReservePane.Core;
 using Microsoft.Win32;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal interface IActivityState
 {

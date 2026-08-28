@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Ui.Controls;
+namespace ReservePane.Ui.Controls;
 
 public partial class ProviderCard : System.Windows.Controls.UserControl, INotifyPropertyChanged
 {

@@ -1,8 +1,8 @@
 using System.Collections.Immutable;
-using QuotaGlass.Model;
-using QuotaGlass.Platform;
+using ReservePane.Model;
+using ReservePane.Platform;
 
-namespace QuotaGlass.Tests.Platform;
+namespace ReservePane.Tests.Platform;
 
 public sealed class TrayStatusPolicyTests
 {

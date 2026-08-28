@@ -1,6 +1,6 @@
-using QuotaGlass.Ui;
+using ReservePane.Ui;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 public sealed class OverlayDragStateTests
 {

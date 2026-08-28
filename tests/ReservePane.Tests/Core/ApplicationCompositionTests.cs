@@ -1,11 +1,11 @@
 using System.Collections.Immutable;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Tests.Support;
-using QuotaGlass.Ui;
-using static QuotaGlass.Tests.Support.SnapshotFactory;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Tests.Support;
+using ReservePane.Ui;
+using static ReservePane.Tests.Support.SnapshotFactory;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class ApplicationCompositionTests : IDisposable
 {

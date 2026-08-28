@@ -1,4 +1,4 @@
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ProcessEnvironmentCollection

@@ -1,12 +1,12 @@
 using System;
 using WixToolset.Dtf.WindowsInstaller;
 
-namespace QuotaGlass.InstallerActions;
+namespace ReservePane.InstallerActions;
 
 public static class AutostartCleanupAction
 {
     [CustomAction]
-    public static ActionResult AddQuotaGlassAutostartCleanup(Session session)
+    public static ActionResult AddReservePaneAutostartCleanup(Session session)
     {
         try
         {
@@ -16,12 +16,12 @@ public static class AutostartCleanupAction
                        "VALUES (?, ?, ?, ?, ?, ?) TEMPORARY"))
             using (var record = new Record(6))
             {
-                record[1] = "QuotaGlassLegacyAutostartCleanup";
+                record[1] = "ReservePaneLegacyAutostartCleanup";
                 record[2] = 1;
                 record[3] = @"Software\Microsoft\Windows\CurrentVersion\Run";
-                record[4] = "QuotaGlass";
-                record[5] = $"\"{session["INSTALLFOLDER"]}QuotaGlass.exe\"";
-                record[6] = "QuotaGlassApplication";
+                record[4] = "ReservePane";
+                record[5] = $"\"{session["INSTALLFOLDER"]}ReservePane.exe\"";
+                record[6] = "ReservePaneApplication";
                 view.Execute(record);
             }
 

@@ -1,8 +1,8 @@
 using System.Windows;
-using QuotaGlass.Core;
-using QuotaGlass.Ui;
+using ReservePane.Core;
+using ReservePane.Ui;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 public sealed class OverlayPositionPersistenceTests
 {

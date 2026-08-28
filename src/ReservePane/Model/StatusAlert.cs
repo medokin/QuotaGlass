@@ -1,4 +1,4 @@
-namespace QuotaGlass.Model;
+namespace ReservePane.Model;
 
 public sealed record StatusAlert(
     string ProviderId,

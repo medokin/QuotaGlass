@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 internal static class SnapshotFactory
 {

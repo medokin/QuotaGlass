@@ -1,7 +1,7 @@
 using System.ComponentModel;
-using QuotaGlass.Ui;
+using ReservePane.Ui;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 [Collection(WpfStaCollection.Name)]
 public sealed class OverlayExtendedStyleTests

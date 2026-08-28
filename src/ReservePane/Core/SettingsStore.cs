@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.IO;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 public sealed class SettingsStore : IDisposable
 {

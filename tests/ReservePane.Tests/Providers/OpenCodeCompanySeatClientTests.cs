@@ -1,11 +1,11 @@
 using System.Net;
 using System.Numerics;
 using System.Text;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Model;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 public sealed class OpenCodeCompanySeatClientTests
 {

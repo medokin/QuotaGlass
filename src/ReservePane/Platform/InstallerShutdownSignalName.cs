@@ -3,7 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal static class InstallerShutdownSignalName
 {
@@ -13,6 +13,6 @@ internal static class InstallerShutdownSignalName
         using SHA256 sha256 = SHA256.Create();
         byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(normalizedPath));
         string hexHash = BitConverter.ToString(hash).Replace("-", string.Empty);
-        return $"Local\\QuotaGlass.InstallerShutdown.{hexHash}";
+        return $"Local\\ReservePane.InstallerShutdown.{hexHash}";
     }
 }

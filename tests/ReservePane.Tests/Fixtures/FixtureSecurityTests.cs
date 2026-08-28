@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace QuotaGlass.Tests.Fixtures;
+namespace ReservePane.Tests.Fixtures;
 
 public sealed class FixtureSecurityTests
 {
@@ -39,7 +39,7 @@ public sealed class FixtureSecurityTests
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            string candidate = Path.Combine(directory.FullName, "tests", "QuotaGlass.Tests", "fixtures");
+            string candidate = Path.Combine(directory.FullName, "tests", "ReservePane.Tests", "fixtures");
             if (Directory.Exists(candidate))
             {
                 return candidate;

@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 public sealed class AppCompositionSmokeTests
 {
@@ -23,7 +23,7 @@ public sealed class AppCompositionSmokeTests
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            string candidate = Path.Combine(directory.FullName, "src", "QuotaGlass", "App.xaml");
+            string candidate = Path.Combine(directory.FullName, "src", "ReservePane", "App.xaml");
             if (File.Exists(candidate))
             {
                 return candidate;

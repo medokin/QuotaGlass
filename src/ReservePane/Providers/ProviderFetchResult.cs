@@ -1,7 +1,7 @@
 using System.Net;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public enum ProviderFetchOutcome
 {

@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
+using ReservePane.Model;
+using ReservePane.Providers;
 
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 internal sealed class FakeStatusProvider : IStatusProvider
 {

@@ -234,7 +234,7 @@ Expected: build succeeds with zero warnings and zero errors. Fix only rename-rel
 dotnet test ReservePane.slnx -c Release --no-build
 ```
 
-Expected: 506 tests pass, including the new shutdown-prefix test.
+Expected: 507 tests pass, including the new shutdown-prefix and initial tray-tooltip tests.
 
 - [ ] **Step 7: Commit the codebase and runtime rename**
 
@@ -250,7 +250,7 @@ git commit -m "feat(branding): rename application to reservepane" -m "Created wi
 **Files:**
 - Move: `assets/branding/quotaglass-logo.svg` to `assets/branding/reservepane-logo.svg`
 - Move: every `assets/branding/quotaglass-logo-*.png` to `assets/branding/reservepane-logo-*.png`
-- Move: `assets/branding/quotaglass.ico` to `assets/branding/reservepane.ico`
+- Existing: `assets/branding/reservepane.ico`, moved with the project rename so the Task 2 build could resolve the renamed application icon
 - Modify: `assets/branding/reservepane-logo.svg`
 - Modify: `assets/branding/build-logo-assets.ps1`
 - Modify: `assets/branding/README.md`
@@ -263,7 +263,6 @@ git commit -m "feat(branding): rename application to reservepane" -m "Created wi
 
 ```powershell
 git mv assets/branding/quotaglass-logo.svg assets/branding/reservepane-logo.svg
-git mv assets/branding/quotaglass.ico assets/branding/reservepane.ico
 Get-ChildItem assets/branding/quotaglass-logo-*.png | ForEach-Object {
     git mv $_.FullName ($_.FullName -replace 'quotaglass-logo-', 'reservepane-logo-')
 }
@@ -516,7 +515,7 @@ dotnet build ReservePane.slnx -c Release --no-restore
 dotnet test ReservePane.slnx -c Release --no-build
 ```
 
-Expected: zero warnings, zero errors, zero failed tests, and 506 total tests unless additional behavior tests were justified during implementation.
+Expected: zero warnings, zero errors, zero failed tests, and 507 total tests unless additional behavior tests were justified during implementation.
 
 - [ ] **Step 2: Verify portable publish inventory**
 

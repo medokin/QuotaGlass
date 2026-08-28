@@ -6,10 +6,10 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
+using ReservePane.Core;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public sealed class OpenCodeGoProvider : IStatusProvider, IProviderAvailability
 {

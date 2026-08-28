@@ -1,4 +1,4 @@
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public interface IProviderAvailability
 {

@@ -2,13 +2,13 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>QuotaGlass</AssemblyName>
-    <RootNamespace>QuotaGlass</RootNamespace>
-    <AssemblyTitle>QuotaGlass</AssemblyTitle>
-    <Product>QuotaGlass</Product>
-    <Description>Windows tray monitor for Claude, Codex, OpenCode, OpenCode Go, and Ollama usage.</Description>
+    <AssemblyName>ReservePane</AssemblyName>
+    <RootNamespace>ReservePane</RootNamespace>
+    <AssemblyTitle>ReservePane</AssemblyTitle>
+    <Product>ReservePane</Product>
+    <Description>ReservePane is a Windows tray application that monitors Claude, Codex, OpenCode, and Ollama usage at a glance.</Description>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <ApplicationIcon>..\..\assets\branding\quotaglass.ico</ApplicationIcon>
+    <ApplicationIcon>..\..\assets\branding\reservepane.ico</ApplicationIcon>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>

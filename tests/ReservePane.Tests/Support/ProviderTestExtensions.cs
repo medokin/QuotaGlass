@@ -1,7 +1,7 @@
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
+using ReservePane.Model;
+using ReservePane.Providers;
 
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 internal static class ProviderTestExtensions
 {

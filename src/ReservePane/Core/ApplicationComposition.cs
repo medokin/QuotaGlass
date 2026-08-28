@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 internal interface IUiDispatcher
 {

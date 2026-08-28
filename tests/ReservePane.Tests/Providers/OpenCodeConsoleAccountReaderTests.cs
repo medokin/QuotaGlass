@@ -1,10 +1,10 @@
 using System.Collections.Immutable;
 using System.Text;
-using QuotaGlass.Core;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 [Collection(ProcessEnvironmentCollection.Name)]
 public sealed class OpenCodeConsoleAccountReaderTests

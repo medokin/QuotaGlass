@@ -2,11 +2,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
-using QuotaGlass.Model;
-using QuotaGlass.Ui;
-using QuotaGlass.Ui.Controls;
+using ReservePane.Model;
+using ReservePane.Ui;
+using ReservePane.Ui.Controls;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 [Collection(WpfStaCollection.Name)]
 public sealed class UiConstructionSmokeTests

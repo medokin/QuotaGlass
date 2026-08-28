@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal sealed record OpenCodeConsoleActiveWorkspace(
     string AccountId,

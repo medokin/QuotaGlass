@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal static class ClaudeCredentialRefresher
 {

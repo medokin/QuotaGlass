@@ -1,4 +1,4 @@
-namespace QuotaGlass.Model;
+namespace ReservePane.Model;
 
 public enum HealthState { Ok, Degraded, AuthExpired, Unreachable }
 public enum Severity { Normal, Warning, Critical }

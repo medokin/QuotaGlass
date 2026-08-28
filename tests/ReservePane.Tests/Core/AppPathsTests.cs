@@ -1,6 +1,6 @@
-using QuotaGlass.Core;
+using ReservePane.Core;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class AppPathsTests
 {

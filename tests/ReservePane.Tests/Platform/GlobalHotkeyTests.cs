@@ -1,9 +1,9 @@
 using System.Windows.Interop;
-using QuotaGlass.Core;
-using QuotaGlass.Platform;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Platform;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Platform;
+namespace ReservePane.Tests.Platform;
 
 public sealed class GlobalHotkeyTests : IDisposable
 {

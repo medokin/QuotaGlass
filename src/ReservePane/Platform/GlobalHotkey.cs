@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
-using QuotaGlass.Core;
+using ReservePane.Core;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal interface IHotkeyNative
 {

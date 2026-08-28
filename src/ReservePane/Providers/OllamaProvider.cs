@@ -4,9 +4,9 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public sealed class OllamaProvider(HttpMessageHandler handler, TimeProvider? timeProvider = null)
     : IStatusProvider, IProviderAvailability

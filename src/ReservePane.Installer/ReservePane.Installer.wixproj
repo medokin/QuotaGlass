@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <InstallerPlatform>x64</InstallerPlatform>
-    <OutputName>QuotaGlass-v$(MsiVersion)-win-x64</OutputName>
+    <OutputName>ReservePane-v$(MsiVersion)-win-x64</OutputName>
     <IntermediateOutputPath>obj\$(Configuration)\$(MsiVersion)\</IntermediateOutputPath>
     <SuppressIces>ICE91</SuppressIces>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\QuotaGlass.InstallerActions\QuotaGlass.InstallerActions.csproj" />
+    <ProjectReference Include="..\ReservePane.InstallerActions\ReservePane.InstallerActions.csproj" />
   </ItemGroup>
 
   <Target Name="ValidateInstallerInputs" BeforeTargets="BeforeBuild">
@@ -22,8 +22,8 @@
            Text="MsiVersion exceeds Windows Installer version limits." />
     <Error Condition="'$(PayloadDir)' == ''"
            Text="PayloadDir must point to the self-contained publish directory." />
-    <Error Condition="!Exists('$(PayloadDir)\QuotaGlass.exe')"
-           Text="PayloadDir must contain QuotaGlass.exe." />
+    <Error Condition="!Exists('$(PayloadDir)\ReservePane.exe')"
+           Text="PayloadDir must contain ReservePane.exe." />
   </Target>
 
 </Project>

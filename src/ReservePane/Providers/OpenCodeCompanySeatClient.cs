@@ -6,7 +6,7 @@ using System.Net.Http.Headers;
 using System.Numerics;
 using System.Text.Json;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal enum OpenCodeCompanySeatFetchOutcome
 {

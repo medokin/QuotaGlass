@@ -4,7 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal static class ProviderHttpSafety
 {

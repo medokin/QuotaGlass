@@ -4,9 +4,9 @@ using System.Net.Http;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public sealed class OpenCodeCompanySeatProvider : IStatusProvider, IRetentionScopedStatusProvider, IProviderAvailability
 {

@@ -1,4 +1,4 @@
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal sealed class InstallerShutdownSignal : IDisposable
 {

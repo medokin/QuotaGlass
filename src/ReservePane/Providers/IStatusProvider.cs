@@ -1,6 +1,6 @@
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 public interface IStatusProvider
 {

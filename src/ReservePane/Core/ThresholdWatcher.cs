@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 public sealed class ThresholdWatcher
 {

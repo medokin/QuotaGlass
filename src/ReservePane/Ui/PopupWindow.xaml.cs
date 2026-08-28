@@ -1,11 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Windows;
-using QuotaGlass.Model;
+using ReservePane.Model;
 using Point = System.Windows.Point;
 using Rect = System.Windows.Rect;
 using Size = System.Windows.Size;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 public partial class PopupWindow : Window, IStatusWindow
 {

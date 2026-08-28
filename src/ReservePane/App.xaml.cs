@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Interop;
-using QuotaGlass.Core;
-using QuotaGlass.Platform;
-using QuotaGlass.Providers;
-using QuotaGlass.Ui;
+using ReservePane.Core;
+using ReservePane.Platform;
+using ReservePane.Providers;
+using ReservePane.Ui;
 
-namespace QuotaGlass;
+namespace ReservePane;
 
 public partial class App : System.Windows.Application
 {
@@ -305,7 +305,7 @@ internal sealed class OwnedHotkeyRegistration : IHotkeyRegistration
 
     public OwnedHotkeyRegistration(string chord, RollingFileLog log)
     {
-        _source = new HwndSource(new HwndSourceParameters("QuotaGlass Hotkey")
+        _source = new HwndSource(new HwndSourceParameters("ReservePane Hotkey")
         {
             Width = 0,
             Height = 0,

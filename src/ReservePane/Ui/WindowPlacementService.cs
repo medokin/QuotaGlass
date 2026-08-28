@@ -1,12 +1,12 @@
 using System.Runtime.InteropServices;
 using System.ComponentModel;
-using QuotaGlass.Core;
+using ReservePane.Core;
 using Point = System.Windows.Point;
 using Rect = System.Windows.Rect;
 using Size = System.Windows.Size;
 using Window = System.Windows.Window;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 public enum TaskbarEdge
 {

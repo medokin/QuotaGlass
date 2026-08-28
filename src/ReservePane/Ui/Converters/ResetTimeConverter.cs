@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Windows.Data;
 
-namespace QuotaGlass.Ui.Converters;
+namespace ReservePane.Ui.Converters;
 
 public sealed class ResetTimeConverter : IValueConverter
 {

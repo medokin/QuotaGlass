@@ -1,8 +1,8 @@
 using System.Net;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 public sealed class ProviderFetchResultTests
 {

@@ -2,12 +2,12 @@ using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 public sealed class OpenCodeGoProviderTests : IDisposable
 {
@@ -552,7 +552,7 @@ public sealed class OpenCodeGoProviderTests : IDisposable
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            string candidate = Path.Combine(directory.FullName, "tests", "QuotaGlass.Tests", "fixtures");
+            string candidate = Path.Combine(directory.FullName, "tests", "ReservePane.Tests", "fixtures");
             if (Directory.Exists(candidate))
             {
                 return candidate;

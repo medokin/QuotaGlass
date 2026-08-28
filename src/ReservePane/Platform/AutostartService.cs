@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 internal interface IRunKey
 {
@@ -34,7 +34,7 @@ internal sealed class RegistryRunKey : IRunKey
 
 public sealed class AutostartService
 {
-    internal const string ValueName = "QuotaGlass";
+    internal const string ValueName = "ReservePane";
     private readonly IRunKey _runKey;
     private readonly string _command;
 

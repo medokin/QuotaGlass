@@ -1,10 +1,10 @@
 using System.Reflection;
 using System.Text;
-using QuotaGlass.Core;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Core;
+namespace ReservePane.Tests.Core;
 
 public sealed class RollingFileLogTests : IDisposable
 {

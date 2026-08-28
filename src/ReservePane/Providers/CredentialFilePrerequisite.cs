@@ -1,7 +1,7 @@
 using System.IO;
 using System.Security;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal static class CredentialFilePrerequisite
 {

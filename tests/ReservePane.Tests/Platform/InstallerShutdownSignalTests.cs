@@ -1,6 +1,6 @@
-using QuotaGlass.Platform;
+using ReservePane.Platform;
 
-namespace QuotaGlass.Tests.Platform;
+namespace ReservePane.Tests.Platform;
 
 public sealed class InstallerShutdownSignalTests
 {

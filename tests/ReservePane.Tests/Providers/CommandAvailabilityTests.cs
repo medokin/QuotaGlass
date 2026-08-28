@@ -1,6 +1,6 @@
-using QuotaGlass.Providers;
+using ReservePane.Providers;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 public sealed class CommandAvailabilityTests
 {

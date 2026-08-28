@@ -4,10 +4,10 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using QuotaGlass.Platform;
+using ReservePane.Platform;
 using WixToolset.Dtf.WindowsInstaller;
 
-namespace QuotaGlass.InstallerActions;
+namespace ReservePane.InstallerActions;
 
 public static class RunningApplicationAction
 {
@@ -33,12 +33,12 @@ public static class RunningApplicationAction
         ref int pathLength);
 
     [CustomAction]
-    public static ActionResult CloseInstalledQuotaGlass(Session session)
+    public static ActionResult CloseInstalledReservePane(Session session)
     {
         string installedExecutable = Path.GetFullPath(
-            Path.Combine(session["INSTALLFOLDER"], "QuotaGlass.exe"));
+            Path.Combine(session["INSTALLFOLDER"], "ReservePane.exe"));
 
-        foreach (Process process in Process.GetProcessesByName("QuotaGlass"))
+        foreach (Process process in Process.GetProcessesByName("ReservePane"))
         {
             using (process)
             {
@@ -57,15 +57,15 @@ public static class RunningApplicationAction
                         continue;
                     }
 
-                    session.Log("Closing the installed QuotaGlass process.");
+                    session.Log("Closing the installed ReservePane process.");
                     SignalGracefulShutdown(installedExecutable);
                     if (!process.WaitForExit(15000))
                     {
-                        session.Log("QuotaGlass did not exit after 15 seconds; terminating it.");
+                        session.Log("ReservePane did not exit after 15 seconds; terminating it.");
                         process.Kill();
                         if (!process.WaitForExit(10000))
                         {
-                            session.Log("QuotaGlass did not exit after termination.");
+                            session.Log("ReservePane did not exit after termination.");
                             return ActionResult.Failure;
                         }
                     }
@@ -76,7 +76,7 @@ public static class RunningApplicationAction
                 }
                 catch (Exception exception)
                 {
-                    session.Log($"The installed QuotaGlass process could not be closed: {exception.Message}");
+                    session.Log($"The installed ReservePane process could not be closed: {exception.Message}");
                     return ActionResult.Failure;
                 }
             }

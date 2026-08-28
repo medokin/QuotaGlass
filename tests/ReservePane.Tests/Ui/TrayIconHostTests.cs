@@ -1,12 +1,12 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Platform;
-using QuotaGlass.Tests.Support;
-using QuotaGlass.Ui;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Platform;
+using ReservePane.Tests.Support;
+using ReservePane.Ui;
 
-namespace QuotaGlass.Tests.Ui;
+namespace ReservePane.Tests.Ui;
 
 public sealed class TrayIconHostTests : IDisposable
 {

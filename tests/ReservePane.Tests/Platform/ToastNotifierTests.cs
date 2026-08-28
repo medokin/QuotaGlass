@@ -1,9 +1,9 @@
 using System.Xml.Linq;
-using QuotaGlass.Model;
-using QuotaGlass.Platform;
+using ReservePane.Model;
+using ReservePane.Platform;
 using CommunityToolkit.WinUI.Notifications;
 
-namespace QuotaGlass.Tests.Platform;
+namespace ReservePane.Tests.Platform;
 
 public sealed class ToastNotifierTests
 {

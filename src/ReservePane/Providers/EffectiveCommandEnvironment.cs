@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security;
 
-namespace QuotaGlass.Providers;
+namespace ReservePane.Providers;
 
 internal sealed record EffectiveCommandEnvironment(
     string? SearchPath,

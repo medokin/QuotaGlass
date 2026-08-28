@@ -1,6 +1,6 @@
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Platform;
+namespace ReservePane.Platform;
 
 public enum TrayState
 {

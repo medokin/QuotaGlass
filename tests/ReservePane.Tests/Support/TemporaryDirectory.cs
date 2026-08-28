@@ -1,10 +1,10 @@
-namespace QuotaGlass.Tests.Support;
+namespace ReservePane.Tests.Support;
 
 public sealed class TemporaryDirectory : IDisposable
 {
     public TemporaryDirectory()
     {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "QuotaGlass.Tests", Guid.NewGuid().ToString("N"));
+        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ReservePane.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path);
     }
 

@@ -1,10 +1,10 @@
 using System.Collections.Immutable;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
+using ReservePane.Model;
+using ReservePane.Providers;
 
-namespace QuotaGlass.Core;
+namespace ReservePane.Core;
 
 public sealed class StatusPoller : IActivityCadencePoller
 {

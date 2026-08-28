@@ -1,6 +1,6 @@
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Tests.Model;
+namespace ReservePane.Tests.Model;
 
 public sealed class SeverityPolicyTests
 {

@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 internal readonly record struct NativeWindowLongResult(IntPtr Value, int ErrorCode);
 

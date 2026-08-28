@@ -1,6 +1,6 @@
-using QuotaGlass.Model;
+using ReservePane.Model;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 public static class ProviderDisplayText
 {

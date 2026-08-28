@@ -1,10 +1,10 @@
 using System.Net;
-using QuotaGlass.Core;
-using QuotaGlass.Model;
-using QuotaGlass.Providers;
-using QuotaGlass.Tests.Support;
+using ReservePane.Core;
+using ReservePane.Model;
+using ReservePane.Providers;
+using ReservePane.Tests.Support;
 
-namespace QuotaGlass.Tests.Providers;
+namespace ReservePane.Tests.Providers;
 
 public sealed class ProviderRegistryTests : IDisposable
 {

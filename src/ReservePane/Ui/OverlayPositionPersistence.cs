@@ -1,7 +1,7 @@
 using System.Runtime.ExceptionServices;
-using QuotaGlass.Core;
+using ReservePane.Core;
 
-namespace QuotaGlass.Ui;
+namespace ReservePane.Ui;
 
 internal delegate Task<AppSettings> SettingsUpdate(
     Func<AppSettings, AppSettings> update,
