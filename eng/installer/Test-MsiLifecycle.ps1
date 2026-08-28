@@ -217,6 +217,46 @@ function Stop-InstalledTestProcesses {
     }
 }
 
+function Assert-InstalledProcessMissing {
+    param([Parameter(Mandatory)][string] $Description)
+
+    $candidates = @(Get-Process -Name 'ReservePane' -ErrorAction SilentlyContinue)
+    foreach ($candidate in $candidates) {
+        try {
+            if ($candidate.Path -eq $installedExecutable) {
+                throw "$Description started ReservePane from '$installedExecutable'."
+            }
+        }
+        catch [System.ComponentModel.Win32Exception] {
+            continue
+        }
+    }
+}
+
+function Assert-MsiActionNotExecuted {
+    param(
+        [Parameter(Mandatory)]
+        [string] $LogName,
+
+        [Parameter(Mandatory)]
+        [string] $ActionName,
+
+        [Parameter(Mandatory)]
+        [string] $Description
+    )
+
+    $logPath = Join-Path $logDirectory $LogName
+    $executionEntries = @(
+        Select-String `
+            -LiteralPath $logPath `
+            -Pattern "Doing action: $ActionName" `
+            -SimpleMatch
+    )
+    if ($executionEntries.Count -gt 0) {
+        throw "$Description executed the prohibited $ActionName action. Log: $logPath"
+    }
+}
+
 function Test-RunValueExists {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runSubKey)
     if ($null -eq $key) {
@@ -269,10 +309,16 @@ try {
         -Operation Install `
         -Target $baseMetadata.MsiPath `
         -LogName 'install-base.log')
+    Assert-MsiActionNotExecuted `
+        -LogName 'install-base.log' `
+        -ActionName 'LaunchReservePane' `
+        -Description 'Silent install'
 
     Assert-PathExists $installedExecutable 'Installed executable'
     Assert-PathExists $startMenuShortcut 'Start Menu shortcut'
     Assert-Registration $baseMetadata.ProductCode $BaseVersion
+    Start-Sleep -Seconds 3
+    Assert-InstalledProcessMissing 'Silent install'
 
     $baseFileInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($installedExecutable)
     if ($baseFileInfo.FileVersion -ne "$BaseVersion.0") {
@@ -310,11 +356,17 @@ try {
         -Operation Install `
         -Target $upgradeMetadata.MsiPath `
         -LogName 'upgrade.log')
+    Assert-MsiActionNotExecuted `
+        -LogName 'upgrade.log' `
+        -ActionName 'LaunchReservePane' `
+        -Description 'Silent upgrade'
 
     $testProcess.Refresh()
     if (-not $testProcess.HasExited) {
         throw 'The installed ReservePane process remained running after upgrade.'
     }
+    Start-Sleep -Seconds 3
+    Assert-InstalledProcessMissing 'Silent upgrade'
     $portableProcess.Refresh()
     if ($portableProcess.HasExited) {
         throw "Portable ReservePane was closed during upgrade with code $($portableProcess.ExitCode)."
@@ -348,6 +400,10 @@ try {
         -Operation Uninstall `
         -Target $upgradeMetadata.ProductCode `
         -LogName 'uninstall.log')
+    Assert-MsiActionNotExecuted `
+        -LogName 'uninstall.log' `
+        -ActionName 'LaunchReservePane' `
+        -Description 'Silent uninstall'
 
     Assert-PathMissing $installedExecutable 'Installed executable'
     Assert-PathMissing $installDirectory 'Install directory'
