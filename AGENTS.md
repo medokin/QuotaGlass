@@ -2,21 +2,21 @@
 
 ## Project Structure & Module Organization
 
-QuotaGlass is a Windows x64 tray application built with .NET 10, C# 14, WPF, and limited WinForms tray APIs. Production code lives in `src/QuotaGlass/`: `Core/` handles polling, settings, and composition; `Providers/` integrates Claude, Codex, and Ollama; `Model/` contains shared domain types; `Platform/` wraps Windows services; and `Ui/` contains windows, controls, converters, and positioning logic. Tests mirror these areas under `tests/QuotaGlass.Tests/`. Keep sanitized provider samples in `tests/QuotaGlass.Tests/Fixtures/`, release checks in `docs/`, and CI changes in `.github/workflows/`.
+ReservePane is a Windows x64 tray application built with .NET 10, C# 14, WPF, and limited WinForms tray APIs. Production code lives in `src/ReservePane/`: `Core/` handles polling, settings, and composition; `Providers/` integrates Claude, Codex, and Ollama; `Model/` contains shared domain types; `Platform/` wraps Windows services; and `Ui/` contains windows, controls, converters, and positioning logic. Tests mirror these areas under `tests/ReservePane.Tests/`. Keep sanitized provider samples in `tests/ReservePane.Tests/Fixtures/`, release checks in `docs/`, and CI changes in `.github/workflows/`.
 
 ## Build, Test, and Development Commands
 
 Run commands from the repository root in PowerShell:
 
 ```powershell
-dotnet restore QuotaGlass.slnx
-dotnet build QuotaGlass.slnx -c Release --no-restore
-dotnet test QuotaGlass.slnx -c Release --no-build
-dotnet run --project src/QuotaGlass/QuotaGlass.csproj
-dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win-x64
+dotnet restore ReservePane.slnx
+dotnet build ReservePane.slnx -c Release --no-restore
+dotnet test ReservePane.slnx -c Release --no-build
+dotnet run --project src/ReservePane/ReservePane.csproj
+dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64
 ```
 
-Restore dependencies before the first build. Use the Release build and test sequence before submitting changes. Publishing must produce a single framework-dependent `QuotaGlass.exe` for Windows x64.
+Restore dependencies before the first build. Use the Release build and test sequence before submitting changes. Publishing must produce a single framework-dependent `ReservePane.exe` for Windows x64.
 
 ## Coding Style & Naming Conventions
 
@@ -64,4 +64,4 @@ repository-settings flow.
 
 ## Security & Configuration
 
-Never commit credentials, tokens, account identifiers, live API responses, or sensitive logs. Sanitize all fixtures and screenshots. Runtime configuration and logs belong under `%APPDATA%\QuotaGlass\`; do not redirect them into the repository. Report vulnerabilities through the private process in `SECURITY.md`.
+Never commit credentials, tokens, account identifiers, live API responses, or sensitive logs. Sanitize all fixtures and screenshots. Runtime configuration and logs belong under `%APPDATA%\ReservePane\`; do not redirect them into the repository. Report vulnerabilities through the private process in `SECURITY.md`.

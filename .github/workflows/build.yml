@@ -66,31 +66,31 @@ jobs:
       - name: Restore
         shell: pwsh
         run: |
-          dotnet restore QuotaGlass.slnx
-          dotnet restore src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj
+          dotnet restore ReservePane.slnx
+          dotnet restore src/ReservePane.Installer/ReservePane.Installer.wixproj
 
       - name: Build
-        run: dotnet build QuotaGlass.slnx -c Release --no-restore
+        run: dotnet build ReservePane.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test QuotaGlass.slnx -c Release --no-build
+        run: dotnet test ReservePane.slnx -c Release --no-build
 
       - name: Publish
-        run: dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win-x64 -o artifacts/QuotaGlass-win-x64
+        run: dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64 -o artifacts/ReservePane-win-x64
 
       - name: Verify published artifact
         shell: pwsh
         run: |
-          $files = @(Get-ChildItem -LiteralPath artifacts/QuotaGlass-win-x64 -File)
-          if ($files.Count -ne 1 -or $files[0].Name -ne 'QuotaGlass.exe') {
-            throw "Expected only QuotaGlass.exe, found: $($files.Name -join ', ')"
+          $files = @(Get-ChildItem -LiteralPath artifacts/ReservePane-win-x64 -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'ReservePane.exe') {
+            throw "Expected only ReservePane.exe, found: $($files.Name -join ', ')"
           }
 
       - name: Publish MSI lifecycle payloads
         shell: pwsh
         run: |
           foreach ($version in @('0.0.1', '0.0.2')) {
-            dotnet publish src/QuotaGlass/QuotaGlass.csproj `
+            dotnet publish src/ReservePane/ReservePane.csproj `
               -c Release `
               --no-restore `
               -p:PublishProfile=win-x64-self-contained `
@@ -98,18 +98,18 @@ jobs:
               -p:FileVersion=$version.0 `
               -p:InformationalVersion=$version `
               -p:IncludeSourceRevisionInInformationalVersion=false `
-              -o "artifacts/QuotaGlass-msi-payload-$version"
+              -o "artifacts/ReservePane-msi-payload-$version"
           }
 
       - name: Build MSI lifecycle packages
         shell: pwsh
         run: |
           foreach ($version in @('0.0.1', '0.0.2')) {
-            dotnet build src/QuotaGlass.Installer/QuotaGlass.Installer.wixproj `
+            dotnet build src/ReservePane.Installer/ReservePane.Installer.wixproj `
               -c Release `
               --no-restore `
               -p:MsiVersion=$version `
-              -p:PayloadDir="$pwd/artifacts/QuotaGlass-msi-payload-$version" `
+              -p:PayloadDir="$pwd/artifacts/ReservePane-msi-payload-$version" `
               -p:OutputPath="$pwd/artifacts/msi-$version/"
           }
 
@@ -117,16 +117,16 @@ jobs:
         shell: pwsh
         run: |
           ./eng/installer/Test-MsiLifecycle.ps1 `
-            -BaseMsiPath artifacts/msi-0.0.1/QuotaGlass-v0.0.1-win-x64.msi `
+            -BaseMsiPath artifacts/msi-0.0.1/ReservePane-v0.0.1-win-x64.msi `
             -BaseVersion 0.0.1 `
-            -UpgradeMsiPath artifacts/msi-0.0.2/QuotaGlass-v0.0.2-win-x64.msi `
+            -UpgradeMsiPath artifacts/msi-0.0.2/ReservePane-v0.0.2-win-x64.msi `
             -UpgradeVersion 0.0.2
 
       - name: Upload application
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: QuotaGlass-win-x64
-          path: artifacts/QuotaGlass-win-x64/QuotaGlass.exe
+          name: ReservePane-win-x64
+          path: artifacts/ReservePane-win-x64/ReservePane.exe
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -134,8 +134,8 @@ jobs:
       - name: Upload MSI
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: QuotaGlass-msi-win-x64
-          path: artifacts/msi-0.0.2/QuotaGlass-v0.0.2-win-x64.msi
+          name: ReservePane-msi-win-x64
+          path: artifacts/msi-0.0.2/ReservePane-v0.0.2-win-x64.msi
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

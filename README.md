@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="assets/branding/quotaglass-logo.svg" alt="QuotaGlass logo" width="160">
+  <img src="assets/branding/reservepane-logo.svg" alt="ReservePane logo" width="160">
 </p>
 
-<h1 align="center">QuotaGlass</h1>
+<h1 align="center">ReservePane</h1>
 
-QuotaGlass is a Windows tray application that shows Claude, Codex, OpenCode,
+ReservePane is a Windows tray application that shows Claude, Codex, OpenCode,
 OpenCode Go, and Ollama status at a glance. It displays current usage windows in a tray
 popup, can keep an optional overlay above other windows, and raises
 notifications when usage crosses configured thresholds.
 
 <img src="docs/assets/overlay.png"
-     alt="QuotaGlass overlay showing mocked Claude, Codex, and Ollama status data"
+     alt="ReservePane overlay showing mocked Claude, Codex, and Ollama status data"
      width="400">
 
 *Overlay shown with mocked provider data.*
@@ -32,7 +32,7 @@ notifications when usage crosses configured thresholds.
   respective cards
 - Ollama running locally for the Ollama card
 
-QuotaGlass reads only the required credential fields from files created by
+ReservePane reads only the required credential fields from files created by
 Claude Code, Codex CLI, and OpenCode. It does not write those files, refresh
 tokens, or log credentials, account identifiers, or API response bodies.
 Providers are discovered from their local prerequisites. Providers that are not
@@ -42,23 +42,23 @@ configured or installed remain hidden.
 
 Download the versioned `.msi` from the GitHub Release and run it. The installer
 contains the required .NET runtime, installs for the current user without
-elevation under `%LOCALAPPDATA%\Programs\QuotaGlass`, and creates a Start Menu
+elevation under `%LOCALAPPDATA%\Programs\ReservePane`, and creates a Start Menu
 shortcut. It does not create a desktop shortcut or enable Start with Windows.
 Windows may show an unknown-publisher warning because the package is not signed.
 
-QuotaGlass appears in Windows Apps & Features after installation. Uninstalling
+ReservePane appears in Windows Apps & Features after installation. Uninstalling
 removes the application and shortcut while preserving settings and logs under
-`%APPDATA%\QuotaGlass`.
+`%APPDATA%\ReservePane`.
 
-The release ZIP is the portable alternative. Its `QuotaGlass.exe` requires the
+The release ZIP is the portable alternative. Its `ReservePane.exe` requires the
 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
 Verify either download with its adjacent SHA-256 checksum file.
 
 For unattended install or removal, use Windows Installer from PowerShell:
 
 ```powershell
-msiexec.exe /i .\QuotaGlass-vX.Y.Z-win-x64.msi /qn /norestart
-msiexec.exe /x .\QuotaGlass-vX.Y.Z-win-x64.msi /qn /norestart
+msiexec.exe /i .\ReservePane-vX.Y.Z-win-x64.msi /qn /norestart
+msiexec.exe /x .\ReservePane-vX.Y.Z-win-x64.msi /qn /norestart
 ```
 
 ## Build
@@ -67,14 +67,14 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0),
 then run:
 
 ```powershell
-dotnet restore QuotaGlass.slnx
-dotnet build QuotaGlass.slnx -c Release --no-restore
-dotnet test QuotaGlass.slnx -c Release --no-build
-dotnet publish src/QuotaGlass/QuotaGlass.csproj -c Release -p:PublishProfile=win-x64
+dotnet restore ReservePane.slnx
+dotnet build ReservePane.slnx -c Release --no-restore
+dotnet test ReservePane.slnx -c Release --no-build
+dotnet publish src/ReservePane/ReservePane.csproj -c Release -p:PublishProfile=win-x64
 ```
 
 The publish profile produces a framework-dependent, single-file
-`QuotaGlass.exe` for Windows x64.
+`ReservePane.exe` for Windows x64.
 
 ## Releases
 
@@ -85,11 +85,11 @@ procedure.
 
 ## Configuration
 
-QuotaGlass creates `%APPDATA%\QuotaGlass\settings.json` on first launch. The
+ReservePane creates `%APPDATA%\ReservePane\settings.json` on first launch. The
 defaults poll once per minute while active, use 80 and 95 percent warning
 thresholds, keep the overlay hidden, and leave autostart disabled.
 
-When no `opencode-go` API key exists, QuotaGlass automatically discovers
+When no `opencode-go` API key exists, ReservePane automatically discovers
 OpenCode Console through the local `opencode` command. No provider setting is
 required. If several workspaces expose Go quota, use their stable selector to
 choose one:
@@ -102,7 +102,7 @@ choose one:
 }
 ```
 
-QuotaGlass reads the OpenCode account database through the read-only
+ReservePane reads the OpenCode account database through the read-only
 `opencode db` command and keeps access tokens in memory only. A configured
 `opencode-go` API key always takes precedence. A single workspace with Go quota
 is selected automatically. If several are eligible, the provider card lists the
@@ -114,7 +114,7 @@ keeps identifiers and the access token in memory, and fails safely if the
 unsupported contract changes. The displayed values are member budget data, not
 organization-wide totals.
 
-Runtime logs are written to `%APPDATA%\QuotaGlass\log.txt`. Logs contain status
+Runtime logs are written to `%APPDATA%\ReservePane\log.txt`. Logs contain status
 categories only, not exception messages, headers, bodies, tokens, account IDs,
 or email addresses.
 
@@ -125,4 +125,4 @@ reports. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## License
 
-QuotaGlass is available under the [MIT License](LICENSE).
+ReservePane is available under the [MIT License](LICENSE).

@@ -1,4 +1,4 @@
-# QuotaGlass Release Acceptance Checklist
+# ReservePane Release Acceptance Checklist
 
 Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL`, or `NOT EXERCISED` in every Status cell. Evidence must name the exact command, observation, or screenshot path. `NOT EXERCISED` requires a concrete environmental reason and should cite automated coverage when available. Never paste credentials, tokens, headers, response bodies, account identifiers, user identifiers, email addresses, or live usage data into this document or screenshots committed to the repository.
 
@@ -39,15 +39,15 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | OVERLAY-07 | While typing in another application, showing or updating the overlay does not move focus or interrupt input. | NOT EXERCISED | Focus probe could not continue after an unrelated Windows Security dialog blocked the desktop; safety guidance required stopping. | No focus result is claimed. |
 | HOTKEY-01 | `Ctrl+Alt+A` toggles the overlay. | NOT EXERCISED | The supported key-input path could not continue after the desktop became blocked. `GlobalHotkeyTests.WindowMessage_ForRegisteredHotkeyRaisesPressed` passed. | No Windows-key shortcut was used. |
 | HOTKEY-02 | If another process owns the hotkey, registration failure is graceful and the application remains usable. | NOT EXERCISED | No controlled competing hotkey owner was available before the desktop became blocked. `GlobalHotkeyTests.Constructor_RegistrationFailureIsLoggedWithoutThrowing` passed. | Automated coverage is not proof of real shell contention. |
-| AUTOSTART-01 | Enabling Start with Windows adds only the `QuotaGlass` value with the quoted executable path. | PASS | Production `AutostartService` added an exact quoted `REG_SZ`; all other Run value names were unchanged. | The prior value was absent and was snapshotted before the check. |
-| AUTOSTART-02 | An external change to the `QuotaGlass` Run value is reflected by the menu state. | NOT EXERCISED | Production `AutostartService.IsEnabled` immediately reflected an external value change and correction; the blocked desktop prevented opening the menu. | Backend live-read behavior passed; actual menu rendering remains unverified. |
-| AUTOSTART-03 | Disabling Start with Windows removes only the `QuotaGlass` value. | PASS | Production `AutostartService` removed the named value; all other Run value names were unchanged; the prior absent state was restored. | No unrelated registry value was modified. |
-| INSTALL-01 | Interactive MSI install completes without an elevation prompt and installs under `%LOCALAPPDATA%\Programs\QuotaGlass`. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies the per-user path and Apps & Features registration. |
+| AUTOSTART-01 | Enabling Start with Windows adds only the `ReservePane` value with the quoted executable path. | PASS | Production `AutostartService` added an exact quoted `REG_SZ`; all other Run value names were unchanged. | The prior value was absent and was snapshotted before the check. |
+| AUTOSTART-02 | An external change to the `ReservePane` Run value is reflected by the menu state. | NOT EXERCISED | Production `AutostartService.IsEnabled` immediately reflected an external value change and correction; the blocked desktop prevented opening the menu. | Backend live-read behavior passed; actual menu rendering remains unverified. |
+| AUTOSTART-03 | Disabling Start with Windows removes only the `ReservePane` value. | PASS | Production `AutostartService` removed the named value; all other Run value names were unchanged; the prior absent state was restored. | No unrelated registry value was modified. |
+| INSTALL-01 | Interactive MSI install completes without an elevation prompt and installs under `%LOCALAPPDATA%\Programs\ReservePane`. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies the per-user path and Apps & Features registration. |
 | INSTALL-02 | Silent install with `msiexec /i <msi> /qn /norestart` succeeds without scheduling a reboot. | NOT EXERCISED | Not part of the recorded release candidate. | Covered by `eng/installer/Test-MsiLifecycle.ps1` for installer changes. |
 | INSTALL-03 | Installation creates one Start Menu shortcut and no desktop shortcut or autostart value. | NOT EXERCISED | Not part of the recorded release candidate. | MSI metadata verification rejects desktop shortcuts and authored Run values. |
-| INSTALL-04 | Installing the newer MSI while QuotaGlass is running upgrades in place without a reboot. | NOT EXERCISED | Not part of the recorded release candidate. | Covered by the two-version automated lifecycle. |
-| INSTALL-05 | Interactive and silent uninstall remove the app, shortcut, Apps & Features entry, and stale `QuotaGlass` Run value. | NOT EXERCISED | Not part of the recorded release candidate. | Confirm both Windows Settings and `msiexec /x <product-code> /qn /norestart`. |
-| INSTALL-06 | Uninstall preserves `%APPDATA%\QuotaGlass`, including existing settings and logs. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies a sentinel survives uninstall. |
+| INSTALL-04 | Installing the newer MSI while ReservePane is running upgrades in place without a reboot. | NOT EXERCISED | Not part of the recorded release candidate. | Covered by the two-version automated lifecycle. |
+| INSTALL-05 | Interactive and silent uninstall remove the app, shortcut, Apps & Features entry, and stale `ReservePane` Run value. | NOT EXERCISED | Not part of the recorded release candidate. | Confirm both Windows Settings and `msiexec /x <product-code> /qn /norestart`. |
+| INSTALL-06 | Uninstall preserves `%APPDATA%\ReservePane`, including existing settings and logs. | NOT EXERCISED | Not part of the recorded release candidate. | The automated lifecycle verifies a sentinel survives uninstall. |
 | POLL-01 | Refresh now starts a new poll without waiting for the normal timer. | NOT EXERCISED | Tray command was inaccessible. `StatusPollerTests.RequestRefresh_WakesRunLoopBeforeTimerTick` and `RequestRefresh_PerformsOnePoll` passed. | No runtime timing evidence was available. |
 | POLL-02 | Normal polling cadence is 60 seconds. | NOT EXERCISED | The real app run could not be observed for a complete cadence. `StatusPollerTests.SetReducedCadence_RecreatesTimerUsingCurrentSettings` passed with documented defaults. | Automated timer coverage is not a wall-clock shell observation. |
 | POLL-03 | Session lock changes polling cadence to the five-minute backoff. | NOT EXERCISED | Locking the automation-controlled workstation was prohibited because it would sever control. `ActivityStateMonitorTests.IsReducedCadence_IsTrueWhileSessionIsLocked` passed. | No workstation lock was attempted. |
@@ -65,17 +65,17 @@ Use this checklist for every Windows x64 release candidate. Record `PASS`, `FAIL
 | LOG-04 | Logs contain no access tokens or refresh tokens. | PASS | A same-user published smoke run created one runtime log; bearer, JWT, access-token, and refresh-token counts were all 0. | No matched text was printed; the prior absent log state was restored. |
 | LOG-05 | Logs contain no account or user identifiers. | PASS | A same-user published smoke run created one runtime log; account-ID and user-ID counts were both 0. | No matched text was printed; the prior absent log state was restored. |
 | LOG-06 | Logs contain no email addresses. | PASS | A same-user published smoke run created one runtime log; the conservative email-marker count was 0. | No matched text was printed; the prior absent log state was restored. |
-| SETTINGS-01 | `%APPDATA%\QuotaGlass\settings.json` contains no access token, refresh token, account identifier, email address, or response body. | PASS | Production `SettingsStore` saved defaults; safe scan counts were 0 for access token, refresh token, account ID, user ID, email, and response body. | The prior absent settings state was restored after the scan. |
+| SETTINGS-01 | `%APPDATA%\ReservePane\settings.json` contains no access token, refresh token, account identifier, email address, or response body. | PASS | Production `SettingsStore` saved defaults; safe scan counts were 0 for access token, refresh token, account ID, user ID, email, and response body. | The prior absent settings state was restored after the scan. |
 
 ## Release verification
 
 | Check | Status | Evidence | Notes |
 |---|---|---|---|
-| `dotnet test QuotaGlass.slnx -c Release` | PASS | 258 passed, 0 failed, 0 skipped. | Release configuration. |
-| `dotnet publish src/QuotaGlass/QuotaGlass.csproj -p:PublishProfile=win-x64` | PASS | Publish exited 0. | Framework-dependent single-file profile. |
-| Published artifact inventory | PASS | `QuotaGlass.exe`, 25,922,423 bytes; no other files. | Inventory taken from the profile publish directory. |
+| `dotnet test ReservePane.slnx -c Release` | PASS | 258 passed, 0 failed, 0 skipped. | Release configuration. |
+| `dotnet publish src/ReservePane/ReservePane.csproj -p:PublishProfile=win-x64` | PASS | Publish exited 0. | Framework-dependent single-file profile. |
+| Published artifact inventory | PASS | `ReservePane.exe`, 25,922,423 bytes; no other files. | Inventory taken from the profile publish directory. |
 | Fixture security test | PASS | Focused Release run: 1 passed, 0 failed; all 6 fixture files scanned. | No matched fixture content was printed. |
-| `dotnet build QuotaGlass.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
+| `dotnet build ReservePane.slnx -c Release` | PASS | Build succeeded with 0 warnings and 0 errors. | Release configuration. |
 | `git diff --check` | PASS | Exit 0 with no output. | Run before commit. |
 | `eng/installer/Test-MsiMetadata.ps1` | NOT EXERCISED | Not part of the recorded release candidate. | Verifies per-user metadata, payload, shortcuts, upgrade identity, and custom-action sequencing. |
 | `eng/installer/Test-MsiLifecycle.ps1` | NOT EXERCISED | Not part of the recorded release candidate. | Verifies silent install, running-process upgrade, uninstall, preservation, and no reboot. |
