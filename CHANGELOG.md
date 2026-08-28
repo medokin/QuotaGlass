@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/medokin/QuotaGlass/compare/v0.1.1...v0.1.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **claude:** refresh expired access tokens ([#32](https://github.com/medokin/QuotaGlass/issues/32)) ([fa762f7](https://github.com/medokin/QuotaGlass/commit/fa762f7319bb18d47f54fd9cf9676643bf11b11a))
+
 ## [0.1.1](https://github.com/medokin/QuotaGlass/compare/v0.1.0...v0.1.1) (2026-08-27)
 
 
